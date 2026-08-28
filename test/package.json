@@ -1,0 +1,15 @@
+{
+  "name": "stakeyourword-test",
+  "private": true,
+  "type": "module",
+  "description": "Integration harness for the StakeYourWord contract on Studionet and Bradbury.",
+  "scripts": {
+    "logic": "python3 test_logic.py",
+    "accounts": "node accounts.mjs",
+    "deploy": "node deploy.mjs",
+    "e2e": "node e2e.mjs"
+  },
+  "dependencies": {
+    "genlayer-js": "^1.1.8"
+  }
+}

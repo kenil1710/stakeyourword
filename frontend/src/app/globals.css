@@ -1,0 +1,474 @@
+@import "tailwindcss";
+
+/*
+ * StakeYourWord — "the ledger".
+ *
+ * The product is a promise with money behind it, checked on a schedule. That is
+ * a ledger, not an arena: a ruled book where each period gets one row and the
+ * row is either settled or it is not. So the ground is accounting paper — an
+ * off-white pulled toward green, never cream — the rules are hairlines, and the
+ * numbers are monospaced and tabular so a column of stakes reads as a column.
+ *
+ * The signature device is the PERIOD RAIL: one chip per period, in order, left
+ * to right. It is the whole product at a glance — how long you promised for,
+ * how far you have got, and what happened each time. It appears at three sizes
+ * and never means anything other than periods.
+ *
+ * Semantic colour is deliberately NOT the red/green of a trading screen. Kept is
+ * a deep pine, broken a muted brick: serious, closer to ink than to alarm,
+ * because a broken promise is a fact to record rather than an emergency. The
+ * ochre accent is the only warm note and it is reserved for one thing — money
+ * that is claimable right now, which is the only thing on any screen a stranger
+ * is being asked to act on.
+ */
+
+:root {
+  /* Ground: off-white with a green cast, so the ochre stays warm against it. */
+  --ground: #f1f4f0;
+  --surface: #fbfcfa;
+  --surface-2: #e7ece6;
+  --sunk: #e9eee8;
+
+  --ink: #16211c;
+  --ink-2: #3c4c44;
+  --muted: #6b7a72;
+
+  --rule: #d3dbd3;
+  --rule-2: #bcc7bc;
+
+  /* Reserved for claimable money and nothing else. */
+  --accent: #9c560f;
+  --accent-ink: #7c4409;
+  --accent-soft: #f2e5d2;
+
+  --kept: #2e6b4e;
+  --kept-soft: #ddebe1;
+  --broken: #9b4536;
+  --broken-soft: #f3e1dc;
+  --pending: #74857b;
+  --pending-soft: #e4eae4;
+  --lapse: #836f3e;
+  --lapse-soft: #eee8d8;
+
+  --focus: #9c560f;
+  --shadow: 0 1px 2px rgba(22, 33, 28, 0.05), 0 8px 24px -16px rgba(22, 33, 28, 0.22);
+
+  --font-display: var(--font-newsreader), Georgia, "Times New Roman", serif;
+  --font-body: var(--font-public-sans), "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #121917;
+    --surface: #19201d;
+    --surface-2: #222b27;
+    --sunk: #161d1a;
+
+    --ink: #e7ede9;
+    --ink-2: #bfcbc4;
+    --muted: #8d9e96;
+
+    --rule: #2a3430;
+    --rule-2: #39443f;
+
+    --accent: #dfa05c;
+    --accent-ink: #eab37a;
+    --accent-soft: #33281b;
+
+    --kept: #6bb189;
+    --kept-soft: #1d2b23;
+    --broken: #d2907c;
+    --broken-soft: #2e211d;
+    --pending: #8d9e96;
+    --pending-soft: #212927;
+    --lapse: #c4ac72;
+    --lapse-soft: #2a2519;
+
+    --focus: #dfa05c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -16px rgba(0, 0, 0, 0.7);
+  }
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-sunk: var(--sunk);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-rule-2: var(--rule-2);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-kept: var(--kept);
+  --color-kept-soft: var(--kept-soft);
+  --color-broken: var(--broken);
+  --color-broken-soft: var(--broken-soft);
+  --color-pending: var(--pending);
+  --color-pending-soft: var(--pending-soft);
+  --color-lapse: var(--lapse);
+  --color-lapse-soft: var(--lapse-soft);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* ── Type ─────────────────────────────────────────────────────────────── */
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.06;
+  text-wrap: balance;
+}
+
+/*
+ * The promise itself, always quoted verbatim and never truncated. It is the one
+ * piece of user writing on the page, so it gets the serif and the room.
+ */
+.quote {
+  font-family: var(--font-display);
+  font-weight: 400;
+  line-height: 1.32;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Surfaces ─────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.card-flat {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+
+.sunk {
+  background: var(--sunk);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+/* ── Period rail ──────────────────────────────────────────────────────── */
+
+.rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  flex: none;
+  transition: transform 0.12s ease;
+}
+
+.chip-lg {
+  width: 38px;
+  height: 32px;
+  font-size: 12px;
+}
+.chip-md {
+  width: 26px;
+  height: 24px;
+  font-size: 10px;
+}
+.chip-sm {
+  width: 14px;
+  height: 14px;
+  font-size: 0;
+  border-radius: 3px;
+}
+
+.chip-kept {
+  background: var(--kept-soft);
+  color: var(--kept);
+  border-color: var(--kept);
+}
+.chip-broken {
+  background: var(--broken-soft);
+  color: var(--broken);
+  border-color: var(--broken);
+}
+.chip-lapse {
+  background: var(--lapse-soft);
+  color: var(--lapse);
+  border-color: var(--lapse);
+}
+.chip-unclear {
+  background: var(--pending-soft);
+  color: var(--pending);
+  border-color: var(--rule-2);
+}
+.chip-due {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.chip-pending {
+  background: transparent;
+  color: var(--pending);
+  border: 1px dashed var(--rule-2);
+}
+
+/* The one animated thing on the page, and only on the one chip that is asking
+ * for action right now. Everything else holds still. */
+.chip-due-live {
+  animation: due-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes due-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip-due-live {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition: none !important;
+  }
+}
+
+/* ── Pills ────────────────────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--rule-2);
+  color: var(--muted);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.pill-kept {
+  color: var(--kept);
+  border-color: var(--kept);
+  background: var(--kept-soft);
+}
+.pill-broken {
+  color: var(--broken);
+  border-color: var(--broken);
+  background: var(--broken-soft);
+}
+.pill-lapse {
+  color: var(--lapse);
+  border-color: var(--lapse);
+  background: var(--lapse-soft);
+}
+.pill-accent {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.pill-neutral {
+  color: var(--pending);
+  border-color: var(--rule-2);
+  background: var(--pending-soft);
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: 1px solid var(--rule-2);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.08s ease;
+  text-decoration: none;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--ink-2);
+  background: var(--surface-2);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ground);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--ink-2);
+  border-color: var(--ink-2);
+  color: var(--ground);
+}
+
+/* Claimable money — the only ochre control in the product. */
+.btn-bounty {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn-bounty:hover:not(:disabled) {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+  color: #fff;
+}
+
+.field {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  transition: border-color 0.12s ease;
+}
+
+.field:focus {
+  border-color: var(--accent);
+}
+
+.field::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.field-mono {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+}
+
+.label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+
+.hint {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── Ruled rows: the ledger device ────────────────────────────────────── */
+
+.ruled > * + * {
+  border-top: 1px solid var(--rule);
+}
+
+.link-quiet {
+  color: var(--ink-2);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule-2);
+}
+
+.link-quiet:hover {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* Wide content never makes the page scroll sideways. */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
