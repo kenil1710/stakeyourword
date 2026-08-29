@@ -1,18 +1,36 @@
 "use client";
 
+/**
+ * Two headers, one component.
+ *
+ * The landing page is marketing and must not ask a stranger to connect a
+ * wallet before they know what the product is, so on `/` the chrome is a logo,
+ * two links, and one way in. Every other route is the app proper, where the
+ * network you are on and the account you are signing with are both load-bearing
+ * facts that belong on screen at all times. See app/page.tsx for the matching
+ * split in the content.
+ */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ArrowRight } from "lucide-react";
 import { ConnectButton } from "./ConnectButton";
 import { NETWORK_LABEL } from "@/lib/genlayer";
 
-const NAV = [
+const APP_NAV = [
   { href: "/browse", label: "Browse" },
   { href: "/commit", label: "Make a promise" },
   { href: "/docs", label: "How it works" },
 ];
 
+const MARKETING_NAV = [
+  { href: "/docs", label: "How it works" },
+  { href: "/browse", label: "Browse" },
+];
+
 export function SiteHeader() {
   const pathname = usePathname();
+  const isLanding = pathname === "/";
+  const nav = isLanding ? MARKETING_NAV : APP_NAV;
 
   return (
     <header className="sticky top-0 z-40 border-b border-rule bg-ground/85 backdrop-blur">
@@ -24,10 +42,12 @@ export function SiteHeader() {
           </span>
         </Link>
 
-        <span className="pill pill-neutral hidden sm:inline-flex">{NETWORK_LABEL}</span>
+        {!isLanding && (
+          <span className="pill pill-neutral hidden sm:inline-flex">{NETWORK_LABEL}</span>
+        )}
 
         <nav className="ml-auto hidden items-center gap-1 md:flex">
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
@@ -45,29 +65,39 @@ export function SiteHeader() {
         </nav>
 
         <div className="ml-auto md:ml-0">
-          <ConnectButton />
+          {isLanding ? (
+            <Link href="/commit" className="btn btn-primary text-[13px]">
+              Launch app
+              <ArrowRight size={15} aria-hidden />
+            </Link>
+          ) : (
+            <ConnectButton />
+          )}
         </div>
       </div>
 
-      {/* The nav moves under the bar rather than into a menu: three links do not
-          need a drawer, and a drawer is one more thing that can trap focus. */}
-      <nav className="flex items-center gap-1 border-t border-rule px-3 py-1.5 md:hidden">
-        {NAV.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`rounded-md px-2.5 py-1.5 text-[13px] font-medium no-underline ${
-                active ? "bg-surface-2 text-ink" : "text-ink-2"
-              }`}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* The nav moves under the bar rather than into a menu: a handful of links
+          do not need a drawer, and a drawer is one more thing that can trap
+          focus. The landing keeps its two links in the bar itself. */}
+      {!isLanding && (
+        <nav className="flex items-center gap-1 border-t border-rule px-3 py-1.5 md:hidden">
+          {nav.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={`rounded-md px-2.5 py-1.5 text-[13px] font-medium no-underline ${
+                  active ? "bg-surface-2 text-ink" : "text-ink-2"
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </header>
   );
 }

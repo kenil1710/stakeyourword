@@ -472,3 +472,153 @@ body {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* ══ Atmosphere ═══════════════════════════════════════════════════════════
+ *
+ * The ground was flat — correct, but airless, and in dark mode especially it
+ * read as "a dark page" rather than as a book. Three additions, all of them
+ * the ledger metaphor rather than decoration on top of it:
+ *
+ *   1. RULING. Accounting paper is ruled, so the ground is ruled: hairlines at
+ *      the body's own line height, and one vertical margin rule down the left
+ *      of the measure like the red line in a real ledger — here in the ochre,
+ *      far too faint to compete with the accent's real job.
+ *   2. A LIFT behind the hero, so the leaf sits on something.
+ *   3. INK-IN, the one-shot settle on the hero rail.
+ *
+ * Every value is deliberately at the edge of visible. The test is that turning
+ * them off should feel like the lights dimming, not like a layer disappearing.
+ */
+
+:root {
+  --paper-line: rgba(22, 33, 28, 0.045);
+  --paper-margin: rgba(156, 86, 15, 0.07);
+  --paper-lift: rgba(46, 107, 78, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    /* Lifted, not merely inverted: a dark ground swallows a hairline that an
+     * off-white ground shows plainly, so the ruling needs roughly twice the
+     * alpha to land at the same apparent weight. */
+    --paper-line: rgba(231, 237, 233, 0.032);
+    --paper-margin: rgba(223, 160, 92, 0.06);
+    --paper-lift: rgba(107, 177, 137, 0.05);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper-line: rgba(231, 237, 233, 0.032);
+  --paper-margin: rgba(223, 160, 92, 0.06);
+  --paper-lift: rgba(107, 177, 137, 0.05);
+}
+
+/* Sits above the body's background and below every bit of content: a negative
+ * z-index child paints over its parent's background but under in-flow siblings,
+ * so no wrapper needs a stacking context of its own. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 31px,
+      var(--paper-line) 31px 32px
+    );
+}
+
+/* The margin rule, at the left edge of the measure. `max-w-6xl` is 72rem, so
+ * the edge sits at `50% - 36rem`; the 20px pushes it into the gutter padding
+ * rather than through the text. Only drawn once the viewport is wide enough to
+ * HAVE a gutter — below that it would run down the middle of the words. */
+@media (min-width: 1200px) {
+  body::after {
+    content: "";
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: calc(50% - 36rem + 20px);
+    width: 1px;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--paper-margin);
+  }
+}
+
+/* The glow and the leaf's second page both bleed sideways on purpose, and a
+ * bleed past the MEASURE must never become a bleed past the VIEWPORT. `clip`
+ * rather than `hidden`: hidden would make the body a scroll container and kill
+ * the sticky header, clip just stops the paint. */
+body {
+  overflow-x: clip;
+}
+
+.hero-glow {
+  position: relative;
+}
+
+.hero-glow::before {
+  content: "";
+  position: absolute;
+  /* Bleeds past the measure so the falloff is never cut by an edge. */
+  inset: -10% -30% -20% -20%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(60% 55% at 68% 38%, var(--paper-lift), transparent 70%);
+}
+
+/* ── The hero leaf ────────────────────────────────────────────────────── */
+
+.hero-leaf {
+  position: relative;
+  margin: 0;
+  background: var(--surface);
+}
+
+/* One page showing behind the top one. The product is a book of these; a single
+ * floating card is not. Hidden on small screens, where the offset only steals
+ * width from the promise. */
+.hero-leaf::after {
+  content: "";
+  position: absolute;
+  inset: 14px -10px -10px 14px;
+  z-index: -1;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--sunk);
+}
+
+@media (max-width: 640px) {
+  .hero-leaf::after {
+    display: none;
+  }
+}
+
+/* ── Ink-in ───────────────────────────────────────────────────────────── */
+
+.ink-in {
+  animation: ink-in 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes ink-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The earlier reduced-motion block kills transitions but not animations, and an
+ * element left at `both` fill would otherwise hold its 0-opacity start frame
+ * forever — the card would simply never arrive. */
+@media (prefers-reduced-motion: reduce) {
+  .ink-in {
+    animation: none;
+  }
+}
