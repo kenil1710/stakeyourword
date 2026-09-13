@@ -16,11 +16,28 @@
  * gate before this helper existed.
  */
 import { createClient, createAccount } from "genlayer-js";
-import { studionet, testnetBradbury } from "genlayer-js/chains";
+import { studioDevnet, studionet, testnetBradbury } from "genlayer-js/chains";
 import { transactionsStatusNumberToName } from "genlayer-js/types";
 import { readFileSync } from "node:fs";
+import { quoteWrite, gen } from "./fees.mjs";
+import { installPacer } from "./pacer.mjs";
 
-export const CHAINS = { studionet, bradbury: testnetBradbury };
+/*
+ * Installed on import, before any client exists. Studio Devnet meters at 30
+ * requests a minute and a single settled write costs a dozen; without this the
+ * suite spends most of its time recovering from its own throughput. See
+ * pacer.mjs.
+ */
+installPacer();
+
+/**
+ * `studiodev` is the Studio Devnet (chain 61997). It is the only one of the
+ * three running the v0.3.0 executor line, which is what the contract's
+ * `# v0.3.0` header and `gl.contract.*` / `gl.storage.*` API target. Studionet
+ * and Bradbury still run v0.2 runners and will answer `invalid_contract runner
+ * malformed` for this source — that is a version mismatch, not a bad contract.
+ */
+export const CHAINS = { studiodev: studioDevnet, studionet, bradbury: testnetBradbury };
 
 /** States that genuinely end a transaction — see deploy.mjs for why not DECIDED_STATES. */
 export const TERMINAL_STATES = ["ACCEPTED", "FINALIZED", "UNDETERMINED", "CANCELED"];
@@ -134,6 +151,15 @@ export function returnedJson(out) {
 export function revertReasonOf(receipt) {
   const result = receipt?.result;
   if (!result) return "";
+  /*
+   * Only a ROLLBACK has a reason. Without this guard the base64 fallback below
+   * decodes a SUCCESSFUL call's return value and hands it back as a revert
+   * message, so every caller printing `out.revertReason || out.failure` shows
+   * the contract's own JSON where it means to show an error — and a log line
+   * that reads like a failure on a transaction that worked is worse than none.
+   */
+  const status = String(result.status ?? "");
+  if (status && status !== "rollback" && status !== "contract_error") return "";
   if (typeof result.payload === "string" && result.payload) return result.payload;
   if (typeof result.raw === "string" && result.raw) {
     try {
@@ -155,7 +181,15 @@ export function failureLine(stderr) {
   return lines[lines.length - 1]?.trim() ?? "";
 }
 
-/** Studionet-only faucet. No-op elsewhere. */
+/**
+ * Studio faucet. No-op on Bradbury, which has no `sim_fundAccount`.
+ *
+ * Studio Devnet is NOT gasless the way Studionet is — it runs a real fee policy
+ * and rejects a zero-fee transaction with `FeeValueMustBeNonZero`. Every
+ * account that signs there has to be funded first, which is the same
+ * requirement Bradbury has and is exactly what the production failure was
+ * about.
+ */
 export async function fundOnStudio(chain, address, wei) {
   if (!chain.isStudio) return false;
   const res = await fetch(chain.rpcUrls.default.http[0], {
@@ -188,8 +222,15 @@ export async function retry(fn, { attempts = 6, baseMs = 4000, label = "rpc" } =
     } catch (e) {
       last = e;
       const message = String(e?.message ?? e);
+      // A per-MINUTE quota has to be waited out in tens of seconds; the usual
+      // few-second backoff just spends the next window's budget failing again.
+      const rateLimited = /Rate limit exceeded|-32029|-32429|\b429\b/i.test(message);
       const transient =
         /Unexpected token '<'|not valid JSON|fetch failed|ECONNRESET|ETIMEDOUT|502|503|504/i.test(message) ||
+        // Studio meters per IP — 30 requests a minute on the Devnet. A trip is
+        // a short wait, not a fault, and a read loop that treats it as one
+        // reports a live contract as missing.
+        /Rate limit exceeded|-32029|-32429|\b429\b/i.test(message) ||
         // Bradbury holds ONE transaction slot per recipient contract. A write
         // that arrives while the previous one is still settling is rejected at
         // the consensus contract, which surfaces as an EVM revert rather than
@@ -197,8 +238,12 @@ export async function retry(fn, { attempts = 6, baseMs = 4000, label = "rpc" } =
         // treating it as a contract fault is not.
         /to consensus contract .* was reverted/i.test(message);
       if (!transient || i === attempts) throw e;
-      console.log(`  … ${label} attempt ${i} hit transient RPC noise, retrying`);
-      await sleep(baseMs * i);
+      const wait = rateLimited ? Math.max(baseMs, 20_000) * i : baseMs * i;
+      console.log(
+        `  … ${label} attempt ${i} hit ${rateLimited ? "a rate limit" : "transient RPC noise"}, ` +
+          `retrying in ${(wait / 1000).toFixed(0)}s`,
+      );
+      await sleep(wait);
     }
   }
   throw last;
@@ -222,8 +267,16 @@ export function connect({ networkName = argOf("network", "studionet"), address, 
   // wall clock than the entire rest of the suite. Nudging covers the first 450s
   // (10 x 45s) and the slowest real Bradbury settle observed is a 223s deploy,
   // so 10 minutes is still several times the worst honest case.
-  const deadline = chain.isStudio ? 240_000 : 600_000;
-  const pollMs = chain.isStudio ? 1_000 : 5_000;
+  /*
+   * Six seconds between polls, not one.
+   *
+   * Every poll is a metered request (see pacer.mjs), and a tight loop spends
+   * the whole per-minute allowance watching one transaction while every other
+   * call in the suite queues behind it. Six seconds costs a few seconds of
+   * latency on a settled write and buys back most of the window.
+   */
+  const deadline = chain.isStudio ? 600_000 : 900_000;
+  const pollMs = chain.isStudio ? 6_000 : 8_000;
 
   /**
    * Submit a write and wait for it to reach a terminal state.
@@ -234,6 +287,32 @@ export function connect({ networkName = argOf("network", "studionet"), address, 
    * tests still unreported — one dropped transaction should not be able to do
    * that to six tests it never touched.
    */
+  /**
+   * Who this call might pay, read off the commitment before it is made.
+   *
+   * The hand-built fee envelope needs an allocation per possible recipient —
+   * see fees.mjs. Every outbound transfer in this contract goes to the
+   * committer, the beneficiary or the caller, and all three are knowable from
+   * the record, so the envelope can cover the call even when the simulation
+   * that would normally derive them could not run.
+   */
+  async function payeesFor(functionName, args) {
+    if (!/verify_commitment|settle_lapsed|settle_stalled|cancel_commitment|add_stake|create_commitment/.test(functionName)) {
+      return [];
+    }
+    const id = Number(args?.[0]);
+    if (!Number.isInteger(id)) return [account.address];
+    try {
+      const row = JSON.parse(
+        await read.readContract({ address, functionName: "get_commitment", args: [id] }),
+      );
+      if (!row?.found) return [account.address];
+      return [...new Set([row.committer, row.beneficiary, account.address])];
+    } catch {
+      return [account.address];
+    }
+  }
+
   async function send(functionName, args = [], value = 0n) {
     const started = Date.now();
     const giveUp = (reason, hash = null) => ({
@@ -246,10 +325,50 @@ export function connect({ networkName = argOf("network", "studionet"), address, 
       revertReason: reason,
     });
 
+    /*
+     * PREFLIGHT, then estimate, then submit — in that order, always.
+     *
+     * Every GenLayer write is an EVM transaction whose `fees` envelope is
+     * locked up front alongside the value riding with it. Submitting without an
+     * estimate is what produced `LackOfFundForMaxFee` in production: the
+     * consensus contract reverted before the contract ran, and the retry's
+     * re-sent envelope came back as an `eth_sendRawTransaction` request-format
+     * error that buried the real cause. See fees.mjs.
+     *
+     * The per-write estimate also carries the message-fee allocations that any
+     * call emitting an outbound transfer needs. Without them the transaction
+     * fails with `fee no_matching_allocation # external` AFTER the stake has
+     * already moved into the contract.
+     */
+    let quote;
+    try {
+      const payees = await payeesFor(functionName, args);
+      quote = await retry(
+        () => quoteWrite(wallet, read, { address, functionName, args, value, account, payees }),
+        { label: `${functionName} quote` },
+      );
+    } catch (e) {
+      return giveUp(`fee estimate failed — ${String(e?.message ?? e)}`);
+    }
+    if (!quote.ok) {
+      // Refuse locally rather than let the consensus contract revert. The
+      // message names the shortfall, so the caller can act on it.
+      return giveUp(quote.reason);
+    }
+    /*
+     * A simulated revert is REPORTED, never obeyed. The simulator's clock runs
+     * hundreds of days behind the chain's, so every time gate in this contract
+     * answers the wrong question under simulation — see fees.mjs. Submitting
+     * anyway lets the real transaction, with the real clock, be the authority.
+     */
+    if (quote.wouldRevert) {
+      console.log(`  … ${functionName} simulated a revert (advisory): ${quote.wouldRevert}`);
+    }
+
     let hash;
     try {
       hash = await retry(
-        () => wallet.writeContract({ address, functionName, args, value }),
+        () => wallet.writeContract({ address, functionName, args, value, fees: quote.fees }),
         { label: functionName },
       );
     } catch (e) {
@@ -311,9 +430,16 @@ export function connect({ networkName = argOf("network", "studionet"), address, 
     }
   }
 
+  /** What a write would cost and whether this role can afford it. */
+  const quote = async (functionName, args = [], value = 0n) =>
+    quoteWrite(wallet, read, {
+      address, functionName, args, value, account,
+      payees: await payeesFor(functionName, args),
+    });
+
   const view = async (functionName, args = []) =>
     retry(() => read.readContract({ address, functionName, args }), { label: functionName });
   const viewJson = async (functionName, args = []) => JSON.parse(await view(functionName, args));
 
-  return { chain, account, wallet, read, send, view, viewJson };
+  return { chain, account, wallet, read, send, quote, view, viewJson, gen };
 }

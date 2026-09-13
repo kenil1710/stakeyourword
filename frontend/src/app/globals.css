@@ -410,6 +410,31 @@ body {
   color: #fff;
 }
 
+/*
+ * The small secondary controls on a transaction receipt — Check status, Nudge,
+ * Retry. Quiet on purpose: they sit inside a status panel, and a row of
+ * full-weight buttons there competes with the outcome the panel is reporting.
+ */
+.btn-sm {
+  font-size: 12.5px;
+  padding: 6px 11px;
+  gap: 6px;
+  border-radius: 5px;
+}
+
+.btn-quiet {
+  background: transparent;
+  border-color: var(--rule);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+
 .field {
   width: 100%;
   font-family: var(--font-body);

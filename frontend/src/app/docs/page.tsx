@@ -26,9 +26,21 @@ export default function DocsPage() {
           that gets the money if you break it, and how long a period lasts. Then you send the stake.
         </p>
         <p>
+          The URL must be <strong>https</strong>. An http page has no authenticated origin, so
+          nothing fetched over it can be attributed to the publisher you named — and attribution is
+          the whole point of nominating a page.
+        </p>
+        <p>
           The URL is checked for reachability before the commitment is created. If the page cannot
           be fetched, nothing is created and the stake is refunded in the same transaction — a
           promise pointing at a dead page could never be judged, so it is better not to exist.
+        </p>
+        <p>
+          What the page says at that moment is <strong>hashed and fingerprinted on chain</strong>,
+          and that fingerprint is what every later deadline measures drift against. You can also pin
+          an immutable snapshot — an archive capture, an IPFS or Arweave link — and when you do,
+          every validator judges the same fixed bytes rather than each fetching a page that might
+          move between them.
         </p>
         <p>
           A repeating promise funds as many periods as the money covers. Anything left over that
@@ -39,8 +51,16 @@ export default function DocsPage() {
       <Section title="How a period is judged">
         <p>
           From a period&apos;s deadline until one full period later, anyone can call for a
-          verification. Validators each fetch the page independently and each decide whether the
-          promise was kept <em>for that period</em>. The verdict is what they agree on.
+          verification. Validators each retrieve the evidence independently and each decide whether
+          the promise was kept <em>for that period</em>.
+        </p>
+        <p>
+          <strong>The evidence is what the page said at the deadline, not what it says now.</strong>{" "}
+          If you pinned a snapshot, that is what is read. Otherwise the contract asks a public
+          archive for a capture from around the deadline and reads that. Only when neither exists
+          does it fall back to the live page — and the record says which of the three it was, so a
+          verdict reached on today&apos;s page about a window that closed last week is visible as
+          exactly that.
         </p>
         <p>There are three verdicts a model can reach:</p>
         <ul>
@@ -60,9 +80,48 @@ export default function DocsPage() {
         </ul>
         <p>
           A fourth outcome, <strong>unverified</strong>, is not a judgement at all. If nobody calls
-          before the grace window closes, the period is closed without any model running: the stake
-          returns to the committer and the record says it was never checked. It is never counted as
-          kept, and it is scored separately.
+          before the grace window closes — or if consensus never forms — the period is closed
+          without any model running: the stake returns to the committer and the record says it was
+          never checked. It is never counted as kept, and it is scored separately. Anyone can
+          trigger that close; a refund path only the owner could trigger would not be a guarantee.
+        </p>
+      </Section>
+
+      <Section title="What validators actually compare">
+        <p>
+          Agreeing on a label is not agreement. So a validator does not sign off on a leader&apos;s
+          verdict until it has retrieved the evidence itself and compared more than the word:
+        </p>
+        <ul>
+          <li>
+            <strong>The verdict</strong>, exactly. There is no adjacent-value tolerance.
+          </li>
+          <li>
+            <strong>The evidence hash</strong>, exactly, whenever both read an archived snapshot. An
+            immutable capture is the same bytes for everyone, so it is the one axis that can be
+            compared byte-for-byte rather than approximately.
+          </li>
+          <li>
+            <strong>How far the page has drifted</strong> from what it said when the promise was
+            made, bucketed coarsely so an ad slot or a timestamp cannot manufacture a disagreement.
+          </li>
+          <li>
+            <strong>Three extracted observations</strong> — whether the page carries a date inside
+            the window, whether a concrete artefact of the work is present, and whether the content
+            is speaking to the evaluator. Two of the three must match.
+          </li>
+        </ul>
+        <p>
+          And when a validator <em>cannot</em> retrieve the evidence, it does not shrug and agree.
+          Its own failed fetch corroborates nothing, so the only thing it will sign off on is the
+          outcome that costs nobody their stake: inconclusive. Accepting a reachable leader on
+          nothing but its own word is the hole that rule closes.
+        </p>
+        <p>
+          One more rule runs after consensus, on the contract&apos;s own arithmetic rather than
+          anybody&apos;s report of it: <strong>a kept verdict on evidence byte-identical to what the
+          page said at creation is downgraded to inconclusive</strong> and the stake comes back.
+          Nothing new on the page you nominated is not evidence that anything was done.
         </p>
       </Section>
 
@@ -130,6 +189,28 @@ export default function DocsPage() {
           When a page contains text addressed at the evaluator, that is flagged on the record and
           shown on the commitment. The flag never decides a verdict — detection lists are always
           incomplete, so the real defence is the framing, not the list.
+        </p>
+      </Section>
+
+      <Section title="What it costs to send a transaction">
+        <p>
+          Every write is an EVM transaction to the consensus contract, and the network locks the
+          fee <em>plus</em> whatever stake rides with it before the contract runs. A wallet that
+          cannot cover both is rejected on chain before anything happens.
+        </p>
+        <p>
+          So nothing here opens a wallet dialog you cannot afford to confirm. Each write is quoted
+          first and the estimate is checked against your balance; if it comes up short, the app
+          refuses locally and tells you the exact amount missing. Nothing is signed and nothing is
+          spent.
+        </p>
+        <p>
+          After you sign, the hash appears immediately and the transaction is tracked through{" "}
+          <strong>pending → accepted → finalized</strong>. Accepted means the state is applied and
+          the money is decided; finalized means it is irreversible. If it parks in between — which
+          consensus does when a validator round does not complete — you get the controls:{" "}
+          <em>Check status</em> polls on demand, <em>Nudge</em> asks the network to move it on, and{" "}
+          <em>Retry</em> sends it again with a fresh estimate.
         </p>
       </Section>
 

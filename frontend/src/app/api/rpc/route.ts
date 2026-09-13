@@ -1,5 +1,6 @@
 /**
- * Same-origin relay for the Studionet JSON-RPC endpoint.
+ * Same-origin relay for the Studio JSON-RPC endpoints (Studionet and Studio
+ * Devnet).
  *
  * ## Why this exists
  *
@@ -33,7 +34,7 @@
  * Bradbury does not need this. It serves CORS headers on errors too, so the
  * browser talks to it directly — see `rpcUrl()` in `lib/genlayer.ts`.
  */
-import { studionet } from "genlayer-js/chains";
+import { studioDevnet, studionet } from "genlayer-js/chains";
 
 /** Streams upstream bodies through; never prerendered. */
 export const dynamic = "force-dynamic";
@@ -48,7 +49,21 @@ export const dynamic = "force-dynamic";
  * *mutates* the exported chain singleton, so a later read could hand back
  * whatever some other caller last wrote.
  */
-const UPSTREAM = process.env.GENLAYER_RPC_UPSTREAM ?? studionet.rpcUrls.default.http[0];
+/*
+ * Which Studio endpoint to relay to, derived from the SAME env var the client
+ * reads. Hardcoding studionet here meant a studiodev build relayed its reads to
+ * the wrong chain and answered "contract not found" for a contract that exists
+ * — a wrong-network failure wearing a missing-contract error message.
+ */
+const STUDIO_UPSTREAM: Record<string, string> = {
+  studiodev: studioDevnet.rpcUrls.default.http[0],
+  studionet: studionet.rpcUrls.default.http[0],
+};
+
+const UPSTREAM =
+  process.env.GENLAYER_RPC_UPSTREAM ??
+  STUDIO_UPSTREAM[process.env.NEXT_PUBLIC_NETWORK ?? "studiodev"] ??
+  studioDevnet.rpcUrls.default.http[0];
 
 /**
  * Backstop against a socket that never closes — deliberately *longer* than the

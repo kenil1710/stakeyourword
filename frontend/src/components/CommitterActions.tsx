@@ -15,7 +15,7 @@ import { useStats } from "@/hooks/useChain";
 import { useTx } from "@/hooks/useTx";
 import { useWallet } from "./WalletProvider";
 import { TxNote } from "./TxNote";
-import { addStake, cancelCommitment } from "@/lib/contract";
+import { addStakeCall, cancelCall } from "@/lib/contract";
 import { gen, sameAddress } from "@/lib/format";
 
 const MAX_FUNDED_PERIODS = 52;
@@ -53,7 +53,13 @@ export function CommitterActions({
   // committer cancelling out of a verdict they can already see coming.
   const dueAlready = now !== null && commitment.next_deadline > 0 && now >= commitment.next_deadline;
   const selfBeneficiary = sameAddress(commitment.committer, commitment.beneficiary);
-  const feeBps = stats?.cancel_fee_bps ?? 1000;
+  /*
+   * The rate SNAPSHOTTED on this commitment, not the contract's current one.
+   * The owner can move the live rate; it cannot reach a commitment that is
+   * already funded, so quoting `stats.cancel_fee_bps` here would show a number
+   * the contract is not going to charge.
+   */
+  const feeBps = commitment.cancel_bps ?? stats?.cancel_fee_bps ?? 1000;
   const remaining = BigInt(commitment.total_staked);
   const fee = selfBeneficiary ? 0n : (remaining / 10000n) * BigInt(feeBps);
 
@@ -98,8 +104,8 @@ export function CommitterActions({
                 className="btn mt-3 text-[13px]"
                 disabled={fund.busy || Boolean(fundProblem)}
                 onClick={async () => {
-                  const out = await fund.run(() => addStake(signer, commitment.id, value));
-                  if (out.phase === "done") onDone();
+                  const out = await fund.run(signer, addStakeCall(commitment, value, signer));
+                  if (out.phase === "accepted" || out.phase === "finalized") onDone();
                 }}
               >
                 {fund.busy ? (
@@ -109,7 +115,13 @@ export function CommitterActions({
                 )}
                 Add {gen(value)}
               </button>
-              <TxNote tx={fund} doneLabel="Funded. The new periods are on the rail." />
+              <TxNote
+                tx={fund}
+                doneLabel="Funded. The new periods are on the rail."
+                onCheck={fund.check}
+                onNudge={fund.nudge}
+                onRetry={fund.retry}
+              />
             </>
           ) : null}
         </div>
@@ -141,9 +153,9 @@ export function CommitterActions({
                   className="btn text-[13px]"
                   disabled={cancel.busy}
                   onClick={async () => {
-                    const out = await cancel.run(() => cancelCommitment(signer, commitment.id));
+                    const out = await cancel.run(signer, cancelCall(commitment, signer));
                     setConfirming(false);
-                    if (out.phase === "done") onDone();
+                    if (out.phase === "accepted" || out.phase === "finalized") onDone();
                   }}
                 >
                   {cancel.busy ? (
@@ -162,7 +174,13 @@ export function CommitterActions({
               </div>
             )
           ) : null}
-          <TxNote tx={cancel} doneLabel="Cancelled. The stake has been returned." />
+          <TxNote
+            tx={cancel}
+            doneLabel="Cancelled. The stake has been returned."
+            onCheck={cancel.check}
+            onNudge={cancel.nudge}
+            onRetry={cancel.retry}
+          />
         </div>
       </div>
     </section>

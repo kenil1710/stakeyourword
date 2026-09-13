@@ -13,6 +13,12 @@ export type Frequency = "ONE_TIME" | "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM";
 /** What a period is waiting for, as computed on chain by `_derived`. */
 export type Action = "" | "VERIFY" | "LAPSED";
 
+/** How the proof source authenticates itself, decided on chain at creation. */
+export type SourceKind = "ATTESTED" | "ARCHIVED" | "OPEN";
+
+/** What a verdict was actually read from. */
+export type EvidenceKind = "ARCHIVE" | "LIVE" | "NONE";
+
 export interface CommitmentSummary {
   id: number;
   committer: string;
@@ -20,6 +26,9 @@ export interface CommitmentSummary {
   description: string;
   verify_url: string;
   url_domain: string;
+  /** An immutable snapshot the committer pinned at creation. "" when none. */
+  archive_url: string;
+  source_kind: SourceKind;
   stake_per_period: string;
   total_staked: string;
   period_seconds: number;
@@ -40,6 +49,15 @@ export interface CommitmentSummary {
   action: Action;
   /** The exact bounty this call would pay, in wei. "0" unless `action` is VERIFY. */
   bounty: string;
+  /** True while a verification for this commitment is already in flight. */
+  verify_in_flight: boolean;
+  /** Unix seconds the in-flight lock expires. 0 when nothing is in flight. */
+  verify_lock_until: number;
+  /** Past its grace window: only the deterministic close can settle it now. */
+  stalled: boolean;
+  /** The rates SNAPSHOTTED at creation — not the contract's current ones. */
+  bounty_bps: number;
+  cancel_bps: number;
 }
 
 export interface VerificationRow {
@@ -50,6 +68,22 @@ export interface VerificationRow {
   reasoning: string;
   confidence: number;
   content_hash: string;
+  content_sketch: string;
+  /**
+   * How close the evidence was to what the page said at CREATION, in basis
+   * points. 10000 is byte-identical; 0 is nothing in common. Recomputed on
+   * chain after consensus, never taken from the leader.
+   */
+  drift_bps: number;
+  evidence_kind: EvidenceKind;
+  /** The immutable snapshot the verdict was read from. "" for a live read. */
+  snapshot_url: string;
+  /** The 14-digit archive timestamp of that snapshot. "" for a live read. */
+  snapshot_stamp: string;
+  /** Whether validators independently retrieved the evidence themselves. */
+  corroborated: boolean;
+  dated_in_window: boolean;
+  artifact_found: boolean;
   unchanged: boolean;
   reachable: boolean;
   injection_flagged: boolean;
@@ -62,6 +96,7 @@ export interface VerificationRow {
 export interface CommitmentDetail extends CommitmentSummary {
   found: true;
   created_hash: string;
+  created_sketch: string;
   created_preview: string;
   last_hash: string;
   injection_flagged: boolean;
@@ -110,6 +145,10 @@ export interface Stats {
   max_funded_periods: number;
   max_active_per_wallet: number;
   min_period_minutes: number;
+  /** How near a deadline an archived snapshot has to be to count as evidence. */
+  archive_window_seconds: number;
+  /** How long a verification holds the in-flight lock. */
+  verify_lock_seconds: number;
   paused: boolean;
   owner: string;
   /** The chain's clock, so countdowns are not driven by the browser's. */
@@ -126,3 +165,33 @@ export interface Stats {
 export type WriteResult =
   | { ok: true; [key: string]: unknown }
   | { ok: false; reason: string; refunded: string };
+
+/**
+ * What `preflight_create` answers.
+ *
+ * The contract's own rejection logic, run as a view before a wallet is opened,
+ * so the UI shows the reason the write would actually give rather than a
+ * TypeScript guess at it. `checks_reachability` is false and says so: whether
+ * the proof URL can be fetched is non-deterministic and only exists inside
+ * consensus.
+ */
+export interface Preflight {
+  ok: boolean;
+  /** "" when ok. Otherwise the contract's own wording. */
+  reason: string;
+  /** Wei that must ride with the call. */
+  required: string;
+  funded_periods: number;
+  stake_per_period: string;
+  min_stake: string;
+  max_stake: string;
+  /** Seconds left on this wallet's create cooldown. 0 when clear. */
+  cooldown_left: number;
+  active: number;
+  max_active: number;
+  paused: boolean;
+  source_kind: SourceKind;
+  /** Always false. The reachability check lives in consensus, not in a view. */
+  checks_reachability: boolean;
+  now: number;
+}

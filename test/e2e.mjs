@@ -7,7 +7,7 @@
  * mean anything once a chain is enforcing them.
  *
  * Usage:
- *   node e2e.mjs [--network=studionet] [--address=0x…] [--base=https://…]
+ *   node e2e.mjs [--network=studiodev] [--address=0x…] [--base=https://…]
  *                [--skip-slow]
  *
  * `--base` is where the verification fixtures live. They have to be fetchable
@@ -33,7 +33,7 @@ import { connect, argOf, sleep, returnedJson, fundOnStudio } from "./harness.mjs
 
 const deployed = JSON.parse(readFileSync(new URL("./.deployed.json", import.meta.url), "utf8"));
 const address = argOf("address", deployed.address);
-const networkName = argOf("network", deployed.network ?? "studionet");
+const networkName = argOf("network", deployed.network ?? "studiodev");
 const BASE = (argOf("base", "https://stakeyourword.vercel.app")).replace(/\/$/, "");
 const SKIP_SLOW = process.argv.includes("--skip-slow");
 
@@ -85,6 +85,8 @@ const committers = {
   self: as("committer4"),
   lapse: as("committer5"),
   cancel: as("committer6"),
+  stalled: as("committer7"),
+  rates: as("committer8"),
 };
 
 const balanceOf = (who) => owner.read.getBalance({ address: who }).catch(() => 0n);
@@ -107,14 +109,33 @@ const balanceOf = (who) => owner.read.getBalance({ address: who }).catch(() => 0
 // 240s: an observed Studio finalization took over a minute, and a false red
 // from polling too briefly is worse than a slow test. Exits early on a match,
 // so the full wait is only ever paid when something is genuinely wrong.
-async function settledDelta(who, before, expected, seconds = 240) {
+//
+// `slack` exists because Studio Devnet is NOT gasless. A wallet that SENT the
+// transaction also paid its fee, so its balance can never return to an exact
+// expected delta — the fee is subtracted on top. Accounts that only RECEIVE a
+// payout are still asserted exactly; only the payer gets the tolerance, and it
+// is bounded well below a single period's stake so it cannot hide a missing
+// leg.
+const FEE_SLACK = GEN / 50n; // 0.02 GEN — an order of magnitude over an observed write fee
+
+async function settledDelta(who, before, expected, { seconds = 300, slack = 0n } = {}) {
   const deadline = Date.now() + seconds * 1000;
+  const hit = (delta) => delta <= expected && delta >= expected - slack;
   for (;;) {
     const delta = (await balanceOf(who)) - before;
-    if (delta === expected || Date.now() > deadline) return delta;
-    await sleep(3000);
+    // 8s, not 3s: every read is metered, and a balance that has not landed yet
+    // will not land any sooner for being asked three times as often.
+    if (hit(delta) || Date.now() > deadline) return delta;
+    await sleep(8000);
   }
 }
+
+/** The delta a wallet that also PAID THE FEE should land in. */
+const paidBy = (who, before, expected) =>
+  settledDelta(who, before, expected, { slack: FEE_SLACK });
+
+/** True when a payer's delta is the expected amount, less at most one fee. */
+const netOf = (delta, expected) => delta <= expected && delta >= expected - FEE_SLACK;
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -135,11 +156,11 @@ async function waitUntil(epoch, why) {
 }
 
 /** Create a commitment and return { id, out, body }. Never throws. */
-async function create(who, { url, recurring = false, periods = 1, stake = STAKE, beneficiary, description = PROMISE }) {
+async function create(who, { url, recurring = false, periods = 1, stake = STAKE, beneficiary, description = PROMISE, archive = "" }) {
   const value = stake * BigInt(periods);
   const out = await who.send(
     "create_commitment",
-    [description, url, beneficiary, PERIOD_MIN, stake.toString(), recurring],
+    [description, url, beneficiary, PERIOD_MIN, stake.toString(), recurring, archive],
     value,
   );
   const body = returnedJson(out.returned);
@@ -156,6 +177,9 @@ if (owner.chain.isStudio) {
   const everyone = [owner, hunter, outsider, beneficiary1, beneficiary2, ...Object.values(committers)];
   for (const who of everyone) await fundOnStudio(owner.chain, who.account.address, 20n * GEN);
   console.log(`funded ${everyone.length} accounts on Studio`);
+  // `empty` is deliberately left at zero: TEST 13 reproduces the production
+  // LackOfFundForMaxFee against it and proves the preflight catches it first.
+  console.log(`left "empty" (${as("empty").account.address}) unfunded on purpose`);
 }
 
 const startStats = await owner.viewJson("get_stats");
@@ -182,10 +206,11 @@ test("TEST 1 · A rejected create refunds and returns ok:false");
   check("refunded the full stake", body?.refunded === STAKE.toString(),
     `refunded ${body?.refunded ?? "—"} of ${STAKE}`);
 
-  if (owner.chain.isStudio) {
-    const delta = await settledDelta(who.account.address, before, 0n);
-    check("the wallet is whole again once the refund finalizes", delta === 0n,
-      `net ${gen(delta)}`);
+  {
+    // The stake comes all the way back; only the network fee is gone.
+    const delta = await paidBy(who.account.address, before, 0n);
+    check("the stake is whole again once the refund finalizes, less only the fee",
+      netOf(delta, 0n), `net ${gen(delta)} (fee only)`);
   }
 }
 
@@ -219,6 +244,8 @@ const plan = [
   ["self", fixture("kept"), beneficiary2],
   ["lapse", fixture("broken"), beneficiary1],
   ["cancel", fixture("kept"), beneficiary2],
+  ["stalled", fixture("stale"), beneficiary1],
+  ["rates", fixture("kept"), beneficiary2],
 ];
 
 for (const [key, url, beneficiary] of plan) {
@@ -260,10 +287,12 @@ if (made.cancel === undefined) {
       BigInt(body.refunded) + BigInt(body.to_beneficiary) === STAKE,
       `${gen(body.refunded)} + ${gen(body.to_beneficiary)}`);
 
-    if (owner.chain.isStudio) {
-      const toCommitter = await settledDelta(who.account.address, beforeCommitter, BigInt(body.refunded));
+    {
+      // The committer sent the cancel, so its delta carries the network fee.
+      const toCommitter = await paidBy(who.account.address, beforeCommitter, BigInt(body.refunded));
       check("the committer actually received the refund",
-        toCommitter === BigInt(body.refunded), gen(toCommitter));
+        netOf(toCommitter, BigInt(body.refunded)), gen(toCommitter));
+      // The beneficiary only receives, so this one is exact.
       const toBeneficiary = await settledDelta(
         beneficiary2.account.address, beforeBeneficiary, BigInt(body.to_beneficiary));
       check("the beneficiary actually received the fee",
@@ -347,15 +376,16 @@ if (made.kept === undefined) {
     check("the reasoning is real prose, not a stub", (row.reasoning ?? "").length >= 40,
       `${(row.reasoning ?? "").length} chars`);
 
-    if (owner.chain.isStudio) {
+    {
       const toCommitter = await settledDelta(
         committers.kept.account.address, beforeCommitter, BigInt(row.to_committer));
       check("the committer's wallet actually grew by its leg",
         toCommitter === BigInt(row.to_committer), gen(toCommitter));
-      const toHunter = await settledDelta(
+      // The hunter both paid the network fee and collected the bounty.
+      const toHunter = await paidBy(
         hunter.account.address, beforeHunter, BigInt(row.caller_bounty));
-      check("the hunter's wallet actually grew by the fee",
-        toHunter === BigInt(row.caller_bounty), gen(toHunter));
+      check("the hunter's wallet actually grew by the bounty, less the network fee",
+        netOf(toHunter, BigInt(row.caller_bounty)), gen(toHunter));
     }
   } else {
     check("a history row was written", false, "no row");
@@ -389,7 +419,7 @@ if (made.broken === undefined) {
     check("the three legs sum to exactly one period's stake",
       BigInt(row.caller_bounty) + BigInt(row.to_committer) + BigInt(row.to_beneficiary) === STAKE);
 
-    if (owner.chain.isStudio) {
+    {
       const toBeneficiary = await settledDelta(
         beneficiary1.account.address, beforeBeneficiary, BigInt(row.to_beneficiary));
       check("the beneficiary's wallet actually grew by its leg",
@@ -453,9 +483,12 @@ if (made.self === undefined) {
     const settled = BigInt(row.to_committer) + BigInt(row.to_beneficiary);
     check("the whole stake settled to one side or the other", settled === STAKE, gen(settled));
 
-    if (owner.chain.isStudio && row.verdict === "MET") {
-      const delta = await settledDelta(who.account.address, before, STAKE);
-      check("the committer got 100% of the stake back", delta === STAKE, gen(delta));
+    if (row.verdict === "MET") {
+      // Self-verification: the committer paid the network fee and got the
+      // whole stake back, with no bounty carved out of it.
+      const delta = await paidBy(who.account.address, before, STAKE);
+      check("the committer got 100% of the stake back, less only the network fee",
+        netOf(delta, STAKE), gen(delta));
     }
   } else {
     check("a history row was written", false, "no row");
@@ -519,7 +552,7 @@ if (made.lapse === undefined || SKIP_SLOW) {
     check("no model ran, so there is no confidence", settled.confidence === 0,
       String(settled.confidence));
 
-    if (owner.chain.isStudio) {
+    {
       const delta = await settledDelta(committers.lapse.account.address, before, STAKE);
       check("the committer's wallet actually grew by the whole stake",
         delta === STAKE, gen(delta));
@@ -571,9 +604,9 @@ test("TEST 11 · The books balance");
     sweep.revertReason?.slice(0, 100) ?? "");
 
   let unallocated = BigInt(stats.unallocated);
-  const settleBy = Date.now() + 240_000;
+  const settleBy = Date.now() + 300_000;
   while (unallocated !== 0n && Date.now() < settleBy) {
-    await sleep(10_000);
+    await sleep(15_000);
     unallocated = BigInt((await owner.viewJson("get_stats")).unallocated);
   }
   check("once the outbound transfers finalize, nothing is left unallocated",
@@ -637,6 +670,264 @@ test("TEST 12 · Owner-only methods reject everybody else");
     `${gen(end.min_stake)} – ${gen(end.max_stake)}`);
   check("the fee rate is exactly as it was found",
     end.bounty_bps === before.bounty_bps, `${end.bounty_bps}bps`);
+}
+
+/* ══ TEST 13 — the preflight that stops LackOfFundForMaxFee ══════════════ */
+
+test("TEST 13 · Every write is quoted and balance-checked before it is signed");
+
+{
+  const who = as("outsider");
+  const args = [PROMISE, fixture("kept"), beneficiary1.account.address, PERIOD_MIN,
+    STAKE.toString(), false, ""];
+
+  const quote = await who.quote("create_commitment", args, STAKE);
+  check("a fee estimate is produced for the exact call", quote.feeValue > 0n,
+    `${gen(quote.feeValue)} of fees`);
+  check("the required amount is the stake plus the fee",
+    quote.required === quote.userValue + quote.feeValue,
+    `${gen(quote.required)} = ${gen(quote.userValue)} + ${gen(quote.feeValue)}`);
+  check("a funded wallet passes the preflight", quote.ok,
+    quote.ok ? `holds ${gen(quote.balance)}` : quote.reason);
+
+  /*
+   * The production failure, reproduced and then caught.
+   *
+   * A wallet holding nothing is exactly the state every Bradbury account was
+   * in when Chrome reported LackOfFundForMaxFee. The preflight has to refuse
+   * it HERE — before anything is signed — rather than let the consensus
+   * contract revert and the retry surface as an eth_sendRawTransaction
+   * request-format error.
+   */
+  const empty = connect({ networkName, address, role: "empty" });
+  const emptyBalance = await balanceOf(empty.account.address);
+  check("the probe wallet really is empty", emptyBalance === 0n, gen(emptyBalance));
+
+  const broke = await empty.quote("create_commitment", args, STAKE);
+  check("an unfundable write fails the preflight", !broke.ok, broke.reason.slice(0, 80));
+  check("the refusal names the amount needed", /You need [\d.]+ GEN/.test(broke.reason),
+    broke.reason);
+  check("the refusal names the shortfall", /short by [\d.]+ GEN/.test(broke.reason));
+  check("the shortfall is the whole requirement on an empty wallet",
+    broke.shortfall === broke.required, `${gen(broke.shortfall)}`);
+
+  const refused = await empty.send("create_commitment", args, STAKE);
+  check("send() refuses locally rather than submitting", !refused.ok);
+  check("nothing was submitted, so there is no transaction hash", refused.hash === null,
+    String(refused.hash));
+  check("the failure carries the actionable message",
+    /You need [\d.]+ GEN/.test(refused.failure ?? ""), (refused.failure ?? "").slice(0, 90));
+}
+
+/* ══ TEST 14 — preflight_create answers what create_commitment would do ══ */
+
+test("TEST 14 · preflight_create predicts the contract's own rejection");
+
+{
+  const who = as("outsider");
+  const pf = (over = {}) => {
+    const base = {
+      description: PROMISE,
+      url: fixture("kept"),
+      beneficiary: beneficiary1.account.address,
+      minutes: PERIOD_MIN,
+      stake: STAKE.toString(),
+      recurring: false,
+      value: STAKE.toString(),
+      archive: "",
+      ...over,
+    };
+    return owner.viewJson("preflight_create", [
+      who.account.address, base.description, base.url, base.beneficiary, base.minutes,
+      base.stake, base.recurring, base.value, base.archive,
+    ]);
+  };
+
+  const good = await pf();
+  check("a valid create preflights clean", good.ok === true, good.reason);
+  check("it reports what must ride with the call", good.required === STAKE.toString(),
+    good.required);
+  check("it says it cannot check reachability", good.checks_reachability === false);
+
+  const short = await pf({ description: "too short" });
+  check("a short description is caught before signing", short.ok === false, short.reason);
+  check("and the reason is the contract's own wording", /12 characters/i.test(short.reason),
+    short.reason);
+
+  const http = await pf({ url: "http://example.com/blog" });
+  check("an http proof url is refused", http.ok === false, http.reason);
+  check("the refusal explains why http is not enough",
+    /authenticated origin/i.test(http.reason), http.reason);
+
+  const dust = await pf({ value: "1" });
+  check("under the minimum stake is caught", dust.ok === false, dust.reason);
+
+  const zero = await pf({ beneficiary: "0x" + "0".repeat(40) });
+  check("the zero beneficiary is caught", zero.ok === false, zero.reason);
+
+  // The same call, made for real, must be rejected for the same reason.
+  const live = await who.send(
+    "create_commitment",
+    ["too short", fixture("kept"), beneficiary1.account.address, PERIOD_MIN,
+      STAKE.toString(), false, ""],
+    STAKE,
+  );
+  const body = returnedJson(live.returned);
+  check("the write rejects with the reason the preflight predicted",
+    body?.reason === short.reason, `${body?.reason} vs ${short.reason}`);
+  check("and refunds the stake", body?.refunded === STAKE.toString(), body?.refunded ?? "—");
+
+  // Source classification is part of the answer, so the UI can say what kind
+  // of evidence this commitment will be judged on before it exists.
+  const pinned = await pf({ archive: "https://arweave.net/abc123" });
+  check("a pinned snapshot preflights as ATTESTED", pinned.source_kind === "ATTESTED",
+    pinned.source_kind);
+  check("an ordinary page preflights as OPEN", good.source_kind === "OPEN", good.source_kind);
+  const archived = await pf({ url: "https://web.archive.org/web/20260101000000id_/https://e.com" });
+  check("an archive url preflights as ARCHIVED", archived.source_kind === "ARCHIVED",
+    archived.source_kind);
+}
+
+/* ══ TEST 15 — creation-time evidence is recorded and drift is measured ══ */
+
+test("TEST 15 · The proof page is hashed at creation and drift is measured at settlement");
+
+if (made.kept === undefined) {
+  check("skipped — no kept commitment", false);
+} else {
+  const view = await owner.viewJson("get_commitment", [made.kept]);
+  check("a content hash was stored at creation", /^[0-9a-f]{16}$/.test(view.created_hash ?? ""),
+    view.created_hash ?? "—");
+  check("a content sketch was stored at creation",
+    /^[0-9a-f]{64}$/.test(view.created_sketch ?? ""), (view.created_sketch ?? "").slice(0, 20));
+  check("the source is classified", ["OPEN", "ARCHIVED", "ATTESTED"].includes(view.source_kind),
+    view.source_kind);
+
+  const row = view.history[view.history.length - 1];
+  if (row) {
+    check("the settlement records which evidence it read",
+      ["ARCHIVE", "LIVE"].includes(row.evidence_kind), row.evidence_kind);
+    check("the settlement records the deadline it was judged against",
+      row.deadline === view.created_at + view.period_seconds * row.period_number,
+      `${row.deadline}`);
+    check("drift since creation is recorded", Number.isInteger(row.drift_bps),
+      `${row.drift_bps} bps`);
+    check("drift is a ratio in range", row.drift_bps >= 0 && row.drift_bps <= 10000,
+      String(row.drift_bps));
+    check("a settled period is marked corroborated", row.corroborated === true,
+      String(row.corroborated));
+    check("the content hash on the row is a real hash",
+      /^[0-9a-f]{16}$/.test(row.content_hash ?? ""), row.content_hash ?? "—");
+    check("an ARCHIVE reading carries its snapshot url",
+      row.evidence_kind !== "ARCHIVE" || /^https:\/\//.test(row.snapshot_url ?? ""),
+      row.snapshot_url || "(live)");
+  } else {
+    check("a history row was written", false, "no row");
+  }
+}
+
+/* ══ TEST 16 — rates are snapshotted at creation ═════════════════════════ */
+
+test("TEST 16 · An owner rate change cannot reach a commitment that already exists");
+
+if (made.rates === undefined) {
+  check("skipped — no rates commitment", false);
+} else {
+  const before = await owner.viewJson("get_stats");
+  const created = await owner.viewJson("get_commitment", [made.rates]);
+  check("the commitment carries its own fee rate", created.bounty_bps === before.bounty_bps,
+    `${created.bounty_bps}bps`);
+
+  // Move the live rate to the other end of its allowed range.
+  const moved = before.bounty_bps === 1000 ? 0 : 1000;
+  const set = await owner.send(
+    "set_params", [moved, before.cancel_fee_bps, before.min_stake, before.max_stake]);
+  check("the owner moved the live rate", set.ok, set.ok ? `to ${moved}bps` : set.revertReason);
+
+  const after = await owner.viewJson("get_commitment", [made.rates]);
+  check("the existing commitment keeps the rate it was created under",
+    after.bounty_bps === before.bounty_bps, `${after.bounty_bps}bps vs live ${moved}bps`);
+
+  const stats = await owner.viewJson("get_stats");
+  check("while the live rate really did change", stats.bounty_bps === moved,
+    `${stats.bounty_bps}bps`);
+
+  const restore = await owner.send(
+    "set_params", [before.bounty_bps, before.cancel_fee_bps, before.min_stake, before.max_stake]);
+  check("the live rate is restored", restore.ok, restore.ok ? "" : restore.revertReason);
+}
+
+/* ══ TEST 17 — settle_stalled is the exit for consensus that never forms ══ */
+
+test("TEST 17 · settle_stalled closes a period no consensus ever settled");
+
+if (made.stalled === undefined || SKIP_SLOW) {
+  check(SKIP_SLOW ? "skipped by --skip-slow" : "skipped — no stalled commitment", false);
+} else {
+  const view0 = await owner.viewJson("get_commitment", [made.stalled]);
+  await waitUntil(view0.grace_ends + 15, "the stalled period's grace window to close");
+
+  const midway = await owner.viewJson("get_commitment", [made.stalled]);
+  check("the commitment reports itself stalled", midway.stalled === true,
+    `action=${midway.action}`);
+  check("a stalled period offers no fee", midway.bounty === "0", midway.bounty);
+
+  const before = await balanceOf(committers.stalled.account.address);
+  const out = await outsider.send("settle_stalled", [made.stalled]);
+  check("anyone can close a stalled period", out.ok,
+    out.ok ? `-> ${out.returned}` : out.revertReason || out.failure);
+
+  const view = await owner.viewJson("get_commitment", [made.stalled]);
+  const row = view.history[view.history.length - 1];
+  if (row) {
+    check("it settles as LAPSED, never as kept or broken", row.verdict === "LAPSED",
+      row.verdict);
+    check("the whole stake goes back to the committer",
+      row.to_committer === STAKE.toString(), gen(row.to_committer));
+    check("nobody is paid a fee", row.caller_bounty === "0", gen(row.caller_bounty));
+    check("no evidence is claimed", row.evidence_kind === "NONE", row.evidence_kind);
+    check("it is not recorded as corroborated", row.corroborated === false);
+    check("the reasoning names the cause", /Consensus never settled/i.test(row.reasoning ?? ""),
+      (row.reasoning ?? "").slice(0, 80));
+
+    {
+      const delta = await settledDelta(committers.stalled.account.address, before, STAKE);
+      check("the committer's wallet actually grew by the whole stake", delta === STAKE,
+        gen(delta));
+    }
+  } else {
+    check("a history row was written", false, "no row");
+  }
+
+  const record = await owner.viewJson("get_track_record", [committers.stalled.account.address]);
+  check("a stalled close is scored as lapsed, not as broken", record.lapsed >= 1,
+    `lapsed=${record.lapsed} broken=${record.broken}`);
+}
+
+/* ══ TEST 18 — the transaction lifecycle the UI drives ═══════════════════ */
+
+test("TEST 18 · The contract exposes the lifecycle a user needs to drive a write");
+
+{
+  const rows = await owner.viewJson("get_verifiable_now");
+  const shape = rows[0] ?? (await owner.viewJson("get_recent_commitments", [1]))[0];
+  if (!shape) {
+    check("skipped — nothing to read a shape from", false);
+  } else {
+    for (const key of ["action", "verify_in_flight", "verify_lock_until", "stalled",
+      "next_deadline", "grace_ends", "bounty", "bounty_bps"]) {
+      check(`the summary carries ${key}`, key in shape, String(shape[key]));
+    }
+    check("verify_in_flight is a boolean, not a timestamp to interpret",
+      typeof shape.verify_in_flight === "boolean", String(shape.verify_in_flight));
+    check("an idle commitment reports no lock", shape.verify_in_flight === false ||
+      shape.verify_lock_until > 0, `${shape.verify_lock_until}`);
+    const stats = await owner.viewJson("get_stats");
+    check("the lock window is published so the UI can count down",
+      stats.verify_lock_seconds > 0, `${stats.verify_lock_seconds}s`);
+    check("the archive window is published", stats.archive_window_seconds > 0,
+      `${stats.archive_window_seconds}s`);
+  }
 }
 
 /* ── Summary ─────────────────────────────────────────────────────────────── */

@@ -13,7 +13,7 @@ import { Gavel, Hourglass, LoaderCircle } from "lucide-react";
 import { useTx } from "@/hooks/useTx";
 import { useWallet } from "./WalletProvider";
 import { TxNote } from "./TxNote";
-import { settleLapsed, verifyCommitment } from "@/lib/contract";
+import { settleStalledCall, verifyCall } from "@/lib/contract";
 import { gen, sameAddress } from "@/lib/format";
 import type { CommitmentSummary } from "@/types";
 
@@ -36,13 +36,20 @@ export function VerifyButton({
   const isCommitter = sameAddress(account, commitment.committer);
   const bounty = BigInt(commitment.bounty || "0");
   const paysBounty = !lapsing && !isCommitter && bounty > 0n;
+  /*
+   * The contract refuses a second verification while one is in flight, and the
+   * refusal is a revert. Showing the lock is the difference between "someone is
+   * already doing this" and a transaction that fails for no visible reason.
+   */
+  const locked = !lapsing && commitment.verify_in_flight && !tx.busy && tx.phase === "idle";
 
   async function act() {
     if (!account) return;
-    const result = lapsing
-      ? await tx.run(() => settleLapsed(account, commitment.id))
-      : await tx.run(() => verifyCommitment(account, commitment.id));
-    if (result.phase === "done") onSettled?.();
+    const result = await tx.run(
+      account,
+      lapsing ? settleStalledCall(commitment, account) : verifyCall(commitment, account),
+    );
+    if (result.phase === "accepted" || result.phase === "finalized") onSettled?.();
   }
 
   if (available === null) return <div className="h-[38px]" aria-hidden />;
@@ -71,6 +78,22 @@ export function VerifyButton({
     );
   }
 
+  if (locked) {
+    return (
+      <div>
+        <button type="button" className="btn" disabled>
+          <Hourglass size={15} aria-hidden />
+          A verification is already in flight
+        </button>
+        <p className="hint mt-2">
+          Somebody called this already and the network has not finished. The contract holds the
+          lock so two verifications cannot settle the same period; it clears on its own when the
+          first one lands or gives up.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <button
@@ -86,15 +109,19 @@ export function VerifyButton({
         ) : (
           <Gavel size={15} aria-hidden />
         )}
-        {tx.busy
-          ? lapsing
-            ? "Closing the period…"
-            : "Validators are reading the page…"
-          : lapsing
-            ? "Close this period"
-            : paysBounty
-              ? `Verify and claim ${gen(bounty)}`
-              : "Verify this period"}
+        {tx.phase === "checking"
+          ? "Estimating the fee…"
+          : tx.phase === "signing"
+            ? "Confirm in your wallet…"
+            : tx.busy
+              ? lapsing
+                ? "Closing the period…"
+                : "Validators are reading the page…"
+              : lapsing
+                ? "Close this period"
+                : paysBounty
+                  ? `Verify and claim ${gen(bounty)}`
+                  : "Verify this period"}
       </button>
 
       <p className="hint mt-2">
@@ -110,6 +137,9 @@ export function VerifyButton({
       <TxNote
         tx={tx}
         doneLabel={lapsing ? "Period closed as unverified." : "Settled. The verdict is on the record."}
+        onCheck={tx.check}
+        onNudge={tx.nudge}
+        onRetry={tx.retry}
       />
     </div>
   );

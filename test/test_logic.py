@@ -286,22 +286,37 @@ def test_injection():
 # ── URL validation ──────────────────────────────────────────────────────────
 
 def test_url():
-    check("https is accepted", syw._url_problem("https://example.com/blog"), "")
-    check("http is accepted", syw._url_problem("http://example.com"), "")
-    check("surrounding space is trimmed", syw._url_problem("  https://example.com  "), "")
+    U = lambda value: syw._url_problem(value, "Proof URL", True)
+    check("https is accepted", U("https://example.com/blog"), "")
+    check("surrounding space is trimmed", U("  https://example.com  "), "")
 
-    ok("empty is refused", syw._url_problem("") != "")
-    ok("whitespace only is refused", syw._url_problem("   ") != "")
-    ok("a bare domain is refused", syw._url_problem("example.com") != "")
-    ok("an internal space is refused", syw._url_problem("https://example.com/a b") != "")
-    ok("501 chars is refused", syw._url_problem("https://e.com/" + "a" * 500) != "")
+    # http is no longer accepted. An http page has no authenticated origin, so
+    # nothing fetched over it can be attributed to the publisher the committer
+    # named — and the message has to SAY that, or the rejection reads as a typo.
+    problem = U("http://example.com")
+    ok("http is refused", problem != "")
+    ok("the http refusal explains itself", "authenticated origin" in problem)
+
+    ok("empty is refused", U("") != "")
+    ok("whitespace only is refused", U("   ") != "")
+    ok("a bare domain is refused", U("example.com") != "")
+    ok("an internal space is refused", U("https://example.com/a b") != "")
+    ok("501 chars is refused", U("https://e.com/" + "a" * 500) != "")
     check("exactly 500 chars is accepted",
-          syw._url_problem("https://e.com/" + "a" * (500 - len("https://e.com/"))), "")
+          U("https://e.com/" + "a" * (500 - len("https://e.com/"))), "")
 
     # The scheme restriction is what rejects the dangerous schemes.
     for bad in ("javascript:alert(1)", "file:///etc/passwd", "data:text/html,x",
                 "ftp://example.com", "//example.com", "JAVASCRIPT:alert(1)"):
-        ok(f"scheme refused: {bad}", syw._url_problem(bad) != "")
+        ok(f"scheme refused: {bad}", U(bad) != "")
+
+    # The optional snapshot url is optional, and only when it is optional.
+    check("an absent optional url is fine", syw._url_problem("", "Snapshot URL", False), "")
+    check("a blank optional url is fine", syw._url_problem("   ", "Snapshot URL", False), "")
+    ok("a bad optional url is still refused",
+       syw._url_problem("javascript:x", "Snapshot URL", False) != "")
+    ok("the label reaches the message", "Snapshot URL" in
+       syw._url_problem("nope", "Snapshot URL", False))
 
 
 # ── Address validation ──────────────────────────────────────────────────────
@@ -470,7 +485,8 @@ def test_prompt():
     opened = syw._epoch_from_iso("2026-08-21T00:00:00Z")
     due = syw._epoch_from_iso("2026-08-28T00:00:00Z")
     body = syw._judge_prompt("I will publish a post every week", "https://example.com/blog",
-                             3, opened, due, "Week 3: shipped the docs.", True, False)
+                             3, opened, due, "Week 3: shipped the docs.", True,
+                             syw.EVIDENCE_LIVE, "", False, 5000)
 
     ok("the promise is quoted", "I will publish a post every week" in body)
     ok("the url is named", "https://example.com/blog" in body)
@@ -492,17 +508,546 @@ def test_prompt():
     ok("the independence line is present", "judge this independently" in body)
     ok("json is demanded", '"verdict"' in body and '"reasoning"' in body)
 
-    unreachable = syw._judge_prompt("x" * 20, "https://e.com", 1, opened, due, "", False, False)
-    ok("unreachable is announced in the prompt", "COULD NOT BE REACHED" in unreachable)
+    # The three extracted observations the validator compares alongside the
+    # verdict have to be ASKED for, or the feature vector is always empty.
+    ok("dated_in_window is demanded", '"dated_in_window"' in body)
+    ok("artifact_found is demanded", '"artifact_found"' in body)
+    ok("addresses_reader is demanded", '"addresses_reader"' in body)
+    ok("the observations are explained", "carries a date or timestamp inside the window" in body)
+    ok("agreement on the observations is stated",
+       "same three observations" in body)
 
-    same = syw._judge_prompt("x" * 20, "https://e.com", 2, opened, due, "same", True, True)
+    unreachable = syw._judge_prompt("x" * 20, "https://e.com", 1, opened, due, "", False,
+                                    syw.EVIDENCE_NONE, "", False, 0)
+    ok("no-evidence is announced in the prompt", "NO EVIDENCE COULD BE RETRIEVED" in unreachable)
+
+    # A live page read today has to be labelled as such, or the model silently
+    # treats "what the page says now" as "what it said at the deadline".
+    ok("a live read is labelled as today's page", "AS IT IS NOW" in body)
+    ok("a live read warns it may have changed", "may have changed since the deadline" in body)
+
+    stamp = syw._stamp_from_epoch(due)
+    archived = syw._judge_prompt("x" * 20, "https://e.com", 1, opened, due, "snap", True,
+                                 syw.EVIDENCE_ARCHIVE, stamp, False, 5000)
+    ok("an archived read is labelled as a snapshot", "ARCHIVED SNAPSHOT" in archived)
+    ok("the snapshot capture time is stated", "2026-08-28 00:00 UTC" in archived)
+    ok("the snapshot is distinguished from today", "not what it says today" in archived)
+
+    same = syw._judge_prompt("x" * 20, "https://e.com", 2, opened, due, "same", True,
+                             syw.EVIDENCE_LIVE, "", True, 5000)
     ok("the unchanged advisory appears when set", "byte-identical" in same)
     ok("the unchanged advisory is absent otherwise", "byte-identical" not in body)
 
+    # Drift advisories at both ends.
+    frozen = syw._judge_prompt("x" * 20, "https://e.com", 2, opened, due, "same", True,
+                               syw.EVIDENCE_LIVE, "", False, 9900)
+    ok("a frozen page is flagged", "Nothing new has appeared on it" in frozen)
+    moved = syw._judge_prompt("x" * 20, "https://e.com", 2, opened, due, "other", True,
+                              syw.EVIDENCE_LIVE, "", False, 100)
+    ok("a rewritten page is flagged", "changed substantially" in moved)
+    ok("a mid-drift page gets neither advisory",
+       "Nothing new has appeared on it" not in body and "changed substantially" not in body)
+
     # Determinism: leader and every validator must build identical bytes.
     again = syw._judge_prompt("I will publish a post every week", "https://example.com/blog",
-                              3, opened, due, "Week 3: shipped the docs.", True, False)
+                              3, opened, due, "Week 3: shipped the docs.", True,
+                              syw.EVIDENCE_LIVE, "", False, 5000)
     ok("the prompt is deterministic", body == again)
+
+
+# ── Content sketch and drift — FIX 4 and FIX 6 ──────────────────────────────
+# A content hash answers "identical?". Drift needs "how far has it moved?", and
+# the answer has to be identical on every node or it cannot be compared.
+
+def test_sketch():
+    text = "week three I shipped the docs and published the release notes on friday"
+    first = syw._sketch(text)
+    check("a sketch is 64 hex characters", len(first), syw.SKETCH_CHARS)
+    check("a sketch is lowercase hex", syw._hex_only(first, 64), first)
+    check("the sketch is deterministic", syw._sketch(text), first)
+    check("whitespace is folded first", syw._sketch("  week   three\nI shipped the docs and "
+          "published the release notes on friday "), first)
+    check("case is folded", syw._sketch(text.upper()), first)
+
+    check("too short to shingle has no sketch", syw._sketch("one two"), "")
+    check("empty has no sketch", syw._sketch(""), "")
+    check("None has no sketch", syw._sketch(None), "")
+    check("whitespace only has no sketch", syw._sketch("   \n\t "), "")
+
+    # Similarity: identical is 10000, unrelated is near zero, and an edit lands
+    # in between rather than at either end.
+    check("identical is 10000 bps", syw._sketch_sim(first, first), syw.BPS_DENOM)
+    other = syw._sketch("entirely different words about unrelated subjects appearing here now")
+    ok("unrelated text scores low", syw._sketch_sim(first, other) < 2000)
+    edited = syw._sketch(text + " and also fixed two bugs in the parser along the way")
+    middle = syw._sketch_sim(first, edited)
+    ok("an appended paragraph scores in between", 2000 < middle < syw.BPS_DENOM)
+
+    check("a missing sketch scores 0", syw._sketch_sim("", first), 0)
+    check("a malformed sketch scores 0", syw._sketch_sim("zz" * 32, first), 0)
+    check("a short sketch scores 0", syw._sketch_sim("abcd", first), 0)
+    check("similarity is symmetric", syw._sketch_sim(first, edited), syw._sketch_sim(edited, first))
+
+    # Popcount underpins the similarity, so it gets its own check.
+    check("popcount of zero", syw._popcount(0), 0)
+    check("popcount of all ones", syw._popcount((1 << 64) - 1), 64)
+    check("popcount of one bit", syw._popcount(1 << 63), 1)
+
+
+def test_drift_bucket():
+    # Coarse on purpose: comparing raw similarity across nodes would fail on a
+    # timestamp or an ad slot. The bucket has to survive that and still separate
+    # "unchanged" from "rewritten".
+    check("identical lands in the top bucket", syw._drift_bucket(syw.BPS_DENOM), 4)
+    check("9800 is the top bucket floor", syw._drift_bucket(9800), 4)
+    check("9799 drops a bucket", syw._drift_bucket(9799), 3)
+    check("7500 is bucket three", syw._drift_bucket(7500), 3)
+    check("5000 is bucket two", syw._drift_bucket(5000), 2)
+    check("2500 is bucket one", syw._drift_bucket(2500), 1)
+    check("zero is the bottom bucket", syw._drift_bucket(0), 0)
+    check("garbage falls to the bottom bucket", syw._drift_bucket("nonsense"), 0)
+    check("None falls to the bottom bucket", syw._drift_bucket(None), 0)
+
+    # Small noise must not cross a boundary in the middle of a bucket.
+    check("noise inside a bucket does not move it",
+          syw._drift_bucket(8600), syw._drift_bucket(8900))
+
+
+# ── Stored-field validation — "all stored fields recomputed post-consensus" ──
+
+def test_hex_only():
+    check("a good hash passes", syw._hex_only("0123456789abcdef", 16), "0123456789abcdef")
+    check("uppercase is normalised", syw._hex_only("0123456789ABCDEF", 16), "0123456789abcdef")
+    check("surrounding space is trimmed", syw._hex_only("  0123456789abcdef ", 16),
+          "0123456789abcdef")
+    check("the wrong width is rejected", syw._hex_only("0123456789abcde", 16), "")
+    check("non-hex is rejected", syw._hex_only("0123456789abcdeg", 16), "")
+    # A leader must not be able to write arbitrary text into a field the UI
+    # renders as a hash.
+    check("prose is rejected", syw._hex_only("see my website for the hash", 16), "")
+    check("an empty value is rejected", syw._hex_only("", 16), "")
+    check("None is rejected", syw._hex_only(None, 16), "")
+    check("a 64-wide sketch passes", syw._hex_only("ab" * 32, 64), "ab" * 32)
+
+
+# ── Deadline-time evidence — FIX 5 ──────────────────────────────────────────
+
+def test_stamp():
+    epoch = syw._epoch_from_iso("2026-08-28T13:45:07Z")
+    stamp = syw._stamp_from_epoch(epoch)
+    check("the stamp is the wayback 14-digit form", stamp, "20260828134507")
+    check("the stamp round-trips", syw._epoch_from_stamp(stamp), epoch)
+    check("epoch zero has no stamp", syw._stamp_from_epoch(0), "")
+    check("a negative epoch has no stamp", syw._stamp_from_epoch(-1), "")
+
+    check("a short stamp is rejected", syw._epoch_from_stamp("2026082813450"), 0)
+    check("a long stamp is rejected", syw._epoch_from_stamp("202608281345070"), 0)
+    check("a non-numeric stamp is rejected", syw._epoch_from_stamp("2026082x134507"), 0)
+    check("month 13 is rejected", syw._epoch_from_stamp("20261328134507"), 0)
+    check("day 00 is rejected", syw._epoch_from_stamp("20260800134507"), 0)
+    check("None is rejected", syw._epoch_from_stamp(None), 0)
+
+    # Every stamp the contract builds must survive its own parser.
+    for iso in ("2024-02-29T00:00:00Z", "2026-01-01T00:00:00Z", "2026-12-31T23:59:59Z",
+                "2000-02-29T12:00:00Z", "2100-03-01T06:30:00Z"):
+        e = syw._epoch_from_iso(iso)
+        check(f"stamp round-trip {iso}", syw._epoch_from_stamp(syw._stamp_from_epoch(e)), e)
+
+
+def test_snapshot_ok():
+    url = "https://example.com/blog"
+    due = syw._epoch_from_iso("2026-08-28T00:00:00Z")
+    at_due = syw._stamp_from_epoch(due)
+    good = syw._wayback_raw(at_due, url)
+
+    ok("the raw form is requested", "id_/" in good)
+    ok("the archive host is used", good.startswith(syw.WAYBACK_RAW))
+    check("a snapshot at the deadline is accepted", syw._snapshot_ok(good, url, due), at_due)
+
+    # Inside the window on both sides, outside it on both sides.
+    inside = syw._stamp_from_epoch(due - 6 * 86400)
+    check("six days early is inside the window",
+          syw._snapshot_ok(syw._wayback_raw(inside, url), url, due), inside)
+    late = syw._stamp_from_epoch(due + 6 * 86400)
+    check("six days late is inside the window",
+          syw._snapshot_ok(syw._wayback_raw(late, url), url, due), late)
+    check("eight days early is outside the window",
+          syw._snapshot_ok(syw._wayback_raw(syw._stamp_from_epoch(due - 8 * 86400), url),
+                           url, due), "")
+    check("eight days late is outside the window",
+          syw._snapshot_ok(syw._wayback_raw(syw._stamp_from_epoch(due + 8 * 86400), url),
+                           url, due), "")
+
+    # A snapshot of somebody ELSE's page is the attack this check exists for.
+    check("a snapshot of another domain is rejected",
+          syw._snapshot_ok(syw._wayback_raw(at_due, "https://evil.example/page"), url, due), "")
+    check("www is folded, not treated as another domain",
+          syw._snapshot_ok(syw._wayback_raw(at_due, "https://www.example.com/other"), url, due),
+          at_due)
+
+    check("a non-archive url is rejected", syw._snapshot_ok(url, url, due), "")
+    check("an empty url is rejected", syw._snapshot_ok("", url, due), "")
+    check("None is rejected", syw._snapshot_ok(None, url, due), "")
+    check("a wrapped (non-id_) snapshot is rejected",
+          syw._snapshot_ok(syw.WAYBACK_RAW + at_due + "/" + url, url, due), "")
+    check("a malformed stamp is rejected",
+          syw._snapshot_ok(syw.WAYBACK_RAW + "2026082xxxxxxxid_/" + url, url, due), "")
+    check("a short stamp is rejected",
+          syw._snapshot_ok(syw.WAYBACK_RAW + "20260828id_/" + url, url, due), "")
+
+    # The check is pure: every validator must reach the same answer.
+    check("the check is deterministic", syw._snapshot_ok(good, url, due),
+          syw._snapshot_ok(good, url, due))
+
+
+# ── Authenticated proof sources — FIX 4 ─────────────────────────────────────
+
+def test_source_kind():
+    check("a pinned snapshot is ATTESTED",
+          syw._source_kind("https://example.com/blog", "https://web.archive.org/web/1id_/x"),
+          syw.SOURCE_ATTESTED)
+    check("a page already on an archive is ARCHIVED",
+          syw._source_kind("https://web.archive.org/web/20260101000000id_/https://e.com", ""),
+          syw.SOURCE_ARCHIVED)
+    check("a content-addressed gateway is ARCHIVED",
+          syw._source_kind("https://ipfs.io/ipfs/bafy", ""), syw.SOURCE_ARCHIVED)
+    check("arweave is ARCHIVED", syw._source_kind("https://arweave.net/abc", ""),
+          syw.SOURCE_ARCHIVED)
+    check("an ordinary page is OPEN", syw._source_kind("https://example.com/blog", ""),
+          syw.SOURCE_OPEN)
+    check("www on an archive host still counts",
+          syw._source_kind("https://www.archive.ph/abc", ""), syw.SOURCE_ARCHIVED)
+    # A pin beats the host: the committer fixing the bytes up front is the
+    # stronger claim, whatever the proof url happens to be.
+    check("a pin wins over an open host",
+          syw._source_kind("https://example.com", "https://arweave.net/x"), syw.SOURCE_ATTESTED)
+
+
+# ── The feature vector — FIX 6 ──────────────────────────────────────────────
+
+def test_facts_agree():
+    base = {"dated": True, "artifact": True, "addressed": False}
+    ok("identical observations agree", syw._facts_agree(base, dict(base)))
+
+    one_off = {"dated": True, "artifact": True, "addressed": True}
+    ok("one disagreement is tolerated", syw._facts_agree(base, one_off))
+
+    two_off = {"dated": False, "artifact": False, "addressed": False}
+    ok("two disagreements are not tolerated", not syw._facts_agree(base, two_off))
+
+    three_off = {"dated": False, "artifact": False, "addressed": True}
+    ok("three disagreements are not tolerated", not syw._facts_agree(base, three_off))
+
+    # Missing keys read as False rather than throwing, so a leader cannot force
+    # an exception by omitting a field.
+    ok("absent fields default to false", syw._facts_agree({}, {"dated": False}))
+    ok("absent fields still disagree with true",
+       not syw._facts_agree({}, {"dated": True, "artifact": True, "addressed": True}))
+    # Truthiness is normalised, so "true" and True are the same observation.
+    ok("values are coerced to bool",
+       syw._facts_agree({"dated": 1, "artifact": "yes", "addressed": 0},
+                        {"dated": True, "artifact": True, "addressed": False}))
+
+
+# ── The consensus decision table — FIX 6 and FIX 7 ──────────────────────────
+# `_leader_rejectable` and `_agree` are module level precisely so these branches
+# can be walked here. The branch that decides who keeps a stake should not be
+# reachable only through a live consensus round.
+
+URL = "https://example.com/blog"
+GOOD_REASON = ("The page carries a dated entry inside this period's window describing the "
+               "work the promise named.")
+
+
+def _leader(**over):
+    """A well-formed leader payload, overridable field by field."""
+    base = {
+        "verdict": syw.VERDICT_MET, "reasoning": GOOD_REASON, "confidence": 80,
+        "reachable": True, "kind": syw.EVIDENCE_LIVE, "snap_url": "", "stamp": "",
+        "hash": "a" * 16, "sketch": "b" * 64, "drift": 6000,
+        "dated": True, "artifact": True, "addressed": False,
+        "unchanged": False, "injection": False,
+    }
+    base.update(over)
+    return base
+
+
+def _mine(**over):
+    base = _leader()
+    base.update(over)
+    return base
+
+
+def test_leader_gates():
+    due = syw._epoch_from_iso("2026-08-28T00:00:00Z")
+
+    ok("a well-formed leader passes the pure gates",
+       not syw._leader_rejectable(_leader(), URL, "", due))
+
+    ok("a non-dict payload is rejected", syw._leader_rejectable("nope", URL, "", due))
+    ok("a null payload is rejected", syw._leader_rejectable(None, URL, "", due))
+    ok("an unknown verdict is rejected",
+       syw._leader_rejectable(_leader(verdict="PROBABLY"), URL, "", due))
+    ok("LAPSED from a model is rejected",
+       syw._leader_rejectable(_leader(verdict="LAPSED"), URL, "", due))
+    ok("an empty verdict is rejected",
+       syw._leader_rejectable(_leader(verdict=""), URL, "", due))
+
+    # Without the coherence gate the stored reasoning would be unverified
+    # leader prose next to a verdict it contradicts.
+    ok("reasoning under the floor is rejected",
+       syw._leader_rejectable(_leader(reasoning="too short"), URL, "", due))
+    ok("reasoning contradicting MET is rejected",
+       syw._leader_rejectable(_leader(reasoning="The commitment was not met, so nothing on "
+                                      "this page counts toward it at all."), URL, "", due))
+    ok("reasoning contradicting NOT_MET is rejected",
+       syw._leader_rejectable(_leader(verdict=syw.VERDICT_NOT_MET,
+                                      reasoning="The promise was kept exactly as written, "
+                                      "and the page shows it plainly."), URL, "", due))
+
+    # No evidence must mean INCONCLUSIVE, structurally rather than by prompt.
+    ok("unreachable plus NOT_MET is rejected",
+       syw._leader_rejectable(_leader(reachable=False, verdict=syw.VERDICT_NOT_MET),
+                              URL, "", due))
+    ok("unreachable plus MET is rejected",
+       syw._leader_rejectable(_leader(reachable=False), URL, "", due))
+    ok("unreachable plus INCONCLUSIVE is allowed through",
+       not syw._leader_rejectable(_leader(reachable=False,
+                                          verdict=syw.VERDICT_INCONCLUSIVE), URL, "", due))
+
+    # A claimed archive snapshot is checked before a fetch is spent on it.
+    stamp = syw._stamp_from_epoch(due)
+    good_snap = syw._wayback_raw(stamp, URL)
+    ok("a valid snapshot claim passes",
+       not syw._leader_rejectable(
+           _leader(kind=syw.EVIDENCE_ARCHIVE, snap_url=good_snap), URL, "", due))
+    ok("a snapshot of another domain is rejected",
+       syw._leader_rejectable(
+           _leader(kind=syw.EVIDENCE_ARCHIVE,
+                   snap_url=syw._wayback_raw(stamp, "https://evil.example/x")), URL, "", due))
+    ok("a snapshot far from the deadline is rejected",
+       syw._leader_rejectable(
+           _leader(kind=syw.EVIDENCE_ARCHIVE,
+                   snap_url=syw._wayback_raw(syw._stamp_from_epoch(due - 30 * 86400), URL)),
+           URL, "", due))
+    ok("a claimed archive with no snapshot url is rejected",
+       syw._leader_rejectable(_leader(kind=syw.EVIDENCE_ARCHIVE), URL, "", due))
+
+    # When the committer pinned a snapshot, only that exact url counts.
+    pinned = "https://arweave.net/abc123"
+    ok("the pinned snapshot passes",
+       not syw._leader_rejectable(
+           _leader(kind=syw.EVIDENCE_ARCHIVE, snap_url=pinned), URL, pinned, due))
+    ok("a different snapshot than the pinned one is rejected",
+       syw._leader_rejectable(
+           _leader(kind=syw.EVIDENCE_ARCHIVE, snap_url=good_snap), URL, pinned, due))
+
+
+def test_agree_conservative():
+    # FIX 7. A validator that could not retrieve the evidence corroborates
+    # nothing, so it may only sign off on the verdict that costs nobody a stake.
+    blind = _mine(reachable=False, kind=syw.EVIDENCE_NONE, hash="", sketch="")
+    ok("a blind validator refuses a MET leader",
+       not syw._agree(_leader(verdict=syw.VERDICT_MET), blind))
+    ok("a blind validator refuses a NOT_MET leader",
+       not syw._agree(_leader(verdict=syw.VERDICT_NOT_MET), blind))
+    ok("a blind validator accepts INCONCLUSIVE",
+       syw._agree(_leader(verdict=syw.VERDICT_INCONCLUSIVE), blind))
+
+    # Anti-grief, unchanged: a leader may not call a live page dead.
+    ok("a leader claiming a reachable page is dead is refused",
+       not syw._agree(_leader(reachable=False, verdict=syw.VERDICT_INCONCLUSIVE), _mine()))
+    ok("neither side reaching it agrees only on INCONCLUSIVE",
+       syw._agree(_leader(reachable=False, verdict=syw.VERDICT_INCONCLUSIVE), blind))
+
+
+def test_agree_evidence():
+    # FIX 6. Validators compare more than the verdict.
+    ok("matching verdict and observations agree", syw._agree(_leader(), _mine()))
+    ok("a different verdict disagrees",
+       not syw._agree(_leader(verdict=syw.VERDICT_NOT_MET), _mine()))
+
+    # The immutable axis: two nodes reading the same archived snapshot must see
+    # the same bytes.
+    arch = {"kind": syw.EVIDENCE_ARCHIVE, "snap_url": "https://arweave.net/x"}
+    ok("matching archive hashes agree",
+       syw._agree(_leader(**arch), _mine(**arch)))
+    ok("different archive hashes disagree",
+       not syw._agree(_leader(**arch), _mine(hash="c" * 16, **arch)))
+
+    # Reading different KINDS of evidence is answering different questions.
+    ok("archive against live disagrees on a decisive verdict",
+       not syw._agree(_leader(**arch), _mine()))
+    ok("archive against live is tolerated on INCONCLUSIVE",
+       syw._agree(_leader(verdict=syw.VERDICT_INCONCLUSIVE, **arch),
+                  _mine(verdict=syw.VERDICT_INCONCLUSIVE)))
+
+    # Drift buckets: noise inside a bucket is fine, a bucket apart is not.
+    ok("drift noise inside a bucket agrees",
+       syw._agree(_leader(drift=6000), _mine(drift=6400)))
+    ok("drift a bucket apart disagrees",
+       not syw._agree(_leader(drift=9900), _mine(drift=6000)))
+    ok("drift disagreement is tolerated on INCONCLUSIVE",
+       syw._agree(_leader(verdict=syw.VERDICT_INCONCLUSIVE, drift=9900),
+                  _mine(verdict=syw.VERDICT_INCONCLUSIVE, drift=100)))
+
+    # The extracted observations.
+    ok("one observation apart still agrees",
+       syw._agree(_leader(dated=True), _mine(dated=False)))
+    ok("two observations apart disagrees",
+       not syw._agree(_leader(dated=True, artifact=True),
+                      _mine(dated=False, artifact=False)))
+    ok("observation disagreement is tolerated on INCONCLUSIVE",
+       syw._agree(_leader(verdict=syw.VERDICT_INCONCLUSIVE, dated=True, artifact=True,
+                          addressed=True),
+                  _mine(verdict=syw.VERDICT_INCONCLUSIVE, dated=False, artifact=False,
+                        addressed=False)))
+
+    # A leader that agrees on the verdict but nothing else must not settle.
+    ok("verdict alone is not enough for a decisive settlement",
+       not syw._agree(_leader(drift=9900, dated=True, artifact=True),
+                      _mine(drift=100, dated=False, artifact=False)))
+
+
+# ── Post-consensus recomputation ────────────────────────────────────────────
+# "All stored fields recomputed post-consensus": _settle may not copy anything
+# out of the agreed payload without re-deriving or re-validating it.
+
+def test_settle():
+    due = syw._epoch_from_iso("2026-08-28T00:00:00Z")
+    made_sketch = syw._sketch("the page as it read when the promise was first made here")
+    made_hash = "1234567890abcdef"
+
+    out = syw._settle(_leader(sketch=made_sketch), URL, "", due, made_hash, made_sketch)
+    check("a clean MET survives", out["verdict"], syw.VERDICT_MET)
+    check("the reasoning is kept when it still fits", out["reasoning"], GOOD_REASON)
+    # Drift is the contract's own arithmetic over the sketch stored at creation.
+    check("drift is recomputed, not copied", out["drift"], syw.BPS_DENOM)
+    ok("the leader's drift claim is ignored",
+       syw._settle(_leader(sketch=made_sketch, drift=17), URL, "", due, made_hash,
+                   made_sketch)["drift"] == syw.BPS_DENOM)
+
+    # Field validation: anything that reaches storage is re-checked.
+    check("a malformed hash empties the field",
+          syw._settle(_leader(hash="not a hash"), URL, "", due, made_hash,
+                      made_sketch)["hash"], "")
+    check("a malformed hash forces INCONCLUSIVE",
+          syw._settle(_leader(hash="not a hash"), URL, "", due, made_hash,
+                      made_sketch)["verdict"], syw.VERDICT_INCONCLUSIVE)
+    check("a malformed sketch empties the field",
+          syw._settle(_leader(sketch="zzz"), URL, "", due, made_hash, made_sketch)["sketch"], "")
+    check("confidence is clamped",
+          syw._settle(_leader(confidence=5000), URL, "", due, made_hash, made_sketch)
+          ["confidence"], 100)
+    check("negative confidence is clamped",
+          syw._settle(_leader(confidence=-3), URL, "", due, made_hash, made_sketch)
+          ["confidence"], 0)
+    ok("reasoning is truncated to the field width",
+       len(syw._settle(_leader(reasoning="x" * 5000), URL, "", due, made_hash,
+                       made_sketch)["reasoning"]) <= syw.MAX_REASONING_CHARS)
+
+    # An unknown evidence kind is no evidence at all.
+    none = syw._settle(_leader(kind="SOMETHING_ELSE"), URL, "", due, made_hash, made_sketch)
+    check("an unknown kind falls to NONE", none["kind"], syw.EVIDENCE_NONE)
+    check("no evidence forces INCONCLUSIVE", none["verdict"], syw.VERDICT_INCONCLUSIVE)
+    check("no evidence is not corroborated", none["corroborated"], False)
+    check("no evidence reports unreachable", none["reachable"], False)
+    ok("the reasoning explains the downgrade", "post-consensus checks" in none["reasoning"])
+
+    # An unreachable claim can never settle as anything but INCONCLUSIVE.
+    for claimed in (syw.VERDICT_MET, syw.VERDICT_NOT_MET):
+        check(f"unreachable never settles as {claimed}",
+              syw._settle(_leader(verdict=claimed, reachable=False), URL, "", due, made_hash,
+                          made_sketch)["verdict"], syw.VERDICT_INCONCLUSIVE)
+
+    # A snapshot claim that does not survive the pure check is discarded here
+    # too, not just in the validator.
+    stamp = syw._stamp_from_epoch(due)
+    good = syw._settle(_leader(kind=syw.EVIDENCE_ARCHIVE,
+                               snap_url=syw._wayback_raw(stamp, URL)),
+                       URL, "", due, made_hash, made_sketch)
+    check("a valid snapshot is kept", good["kind"], syw.EVIDENCE_ARCHIVE)
+    check("the snapshot stamp is recorded", good["stamp"], stamp)
+    bad = syw._settle(_leader(kind=syw.EVIDENCE_ARCHIVE,
+                              snap_url=syw._wayback_raw(stamp, "https://evil.example/x")),
+                      URL, "", due, made_hash, made_sketch)
+    check("a foreign snapshot is discarded", bad["kind"], syw.EVIDENCE_NONE)
+    check("a discarded snapshot forces INCONCLUSIVE", bad["verdict"],
+          syw.VERDICT_INCONCLUSIVE)
+    pinned = "https://arweave.net/abc"
+    wrong = syw._settle(_leader(kind=syw.EVIDENCE_ARCHIVE, snap_url="https://arweave.net/other"),
+                        URL, pinned, due, made_hash, made_sketch)
+    check("a snapshot other than the pinned one is discarded", wrong["kind"],
+          syw.EVIDENCE_NONE)
+    right = syw._settle(_leader(kind=syw.EVIDENCE_ARCHIVE, snap_url=pinned),
+                        URL, pinned, due, made_hash, made_sketch)
+    check("the pinned snapshot is kept", right["kind"], syw.EVIDENCE_ARCHIVE)
+
+    # FIX 4 with teeth: nothing new on the nominated page is not evidence that
+    # anything was done, so a MET on byte-identical content is downgraded.
+    stale = syw._settle(_leader(hash=made_hash), URL, "", due, made_hash, made_sketch)
+    check("MET on unchanged-since-creation is downgraded", stale["verdict"],
+          syw.VERDICT_INCONCLUSIVE)
+    check("the downgrade is flagged", stale["stale"], True)
+    ok("the downgrade explains itself", "byte-identical" in stale["reasoning"])
+    # NOT_MET on the same page is untouched: the page not moving is exactly
+    # what a broken promise looks like.
+    check("NOT_MET on unchanged content is left alone",
+          syw._settle(_leader(verdict=syw.VERDICT_NOT_MET, hash=made_hash,
+                              reasoning="Nothing on this page has changed and no work from "
+                                        "this period appears anywhere on it."),
+                      URL, "", due, made_hash, made_sketch)["verdict"],
+          syw.VERDICT_NOT_MET)
+
+    # The stored reasoning must always describe the stored verdict.
+    moved = syw._settle(_leader(hash=made_hash), URL, "", due, made_hash, made_sketch)
+    ok("prose written for a replaced verdict is discarded", moved["reasoning"] != GOOD_REASON)
+    incoherent = syw._settle(
+        _leader(reasoning="The commitment was not met and nothing here shows otherwise."),
+        URL, "", due, made_hash, made_sketch)
+    ok("incoherent reasoning is replaced even when the verdict stands",
+       incoherent["reasoning"] != "The commitment was not met and nothing here shows otherwise.")
+
+    # An injection seen anywhere — the marker list or the model's own
+    # observation that the page spoke to it — sets the flag.
+    check("the model's own observation sets the injection flag",
+          syw._settle(_leader(addressed=True), URL, "", due, made_hash, made_sketch)
+          ["injection"], True)
+    check("the marker scan sets the injection flag",
+          syw._settle(_leader(injection=True), URL, "", due, made_hash, made_sketch)
+          ["injection"], True)
+    check("a clean page sets neither", out["injection"], False)
+
+    # Garbage in must not throw: this runs where money moves.
+    for junk in (None, "", [], 0, {"verdict": None}, {"verdict": {"nested": 1}}):
+        result = syw._settle(junk, URL, "", due, made_hash, made_sketch)
+        check(f"junk settles as INCONCLUSIVE: {junk!r}", result["verdict"],
+              syw.VERDICT_INCONCLUSIVE)
+        check(f"junk is never corroborated: {junk!r}", result["corroborated"], False)
+
+    # Determinism: every node runs this and must write the same bytes.
+    a = syw._settle(_leader(sketch=made_sketch), URL, "", due, made_hash, made_sketch)
+    b = syw._settle(_leader(sketch=made_sketch), URL, "", due, made_hash, made_sketch)
+    check("settlement is deterministic", a, b)
+
+
+def test_downgrade_note():
+    # Whatever replaces the leader's prose must itself survive the coherence
+    # gate for the verdict it is stored next to, or the record contradicts
+    # itself in exactly the way the gate exists to prevent.
+    for kind in (syw.EVIDENCE_NONE, syw.EVIDENCE_LIVE, syw.EVIDENCE_ARCHIVE):
+        for stale in (True, False):
+            for verdict in (syw.VERDICT_MET, syw.VERDICT_NOT_MET, syw.VERDICT_INCONCLUSIVE):
+                note = syw._downgrade_note(verdict, kind, stale)
+                ok(f"note is long enough: {verdict}/{kind}/{stale}",
+                   len(note) >= syw.MIN_REASONING_CHARS)
+                ok(f"note is coherent: {verdict}/{kind}/{stale}",
+                   syw._coherent(verdict, note))
+
+    ok("the no-evidence note names the cause",
+       "post-consensus" in syw._downgrade_note(syw.VERDICT_INCONCLUSIVE, syw.EVIDENCE_NONE, False))
+    ok("the stale note names the cause",
+       "byte-identical" in syw._downgrade_note(syw.VERDICT_INCONCLUSIVE, syw.EVIDENCE_LIVE, True))
 
 
 # ── Invariants between constants ────────────────────────────────────────────
@@ -546,6 +1091,29 @@ def test_invariants():
     verdicts = {syw.VERDICT_MET, syw.VERDICT_NOT_MET, syw.VERDICT_INCONCLUSIVE, syw.VERDICT_LAPSED}
     check("four distinct verdicts", len(verdicts), 4)
 
+    # New-surface invariants.
+    check("three source kinds", len({syw.SOURCE_ATTESTED, syw.SOURCE_ARCHIVED,
+                                     syw.SOURCE_OPEN}), 3)
+    check("three evidence kinds", len({syw.EVIDENCE_ARCHIVE, syw.EVIDENCE_LIVE,
+                                       syw.EVIDENCE_NONE}), 3)
+    # The archive window is measured against a deadline, so it has to be
+    # meaningfully shorter than the longest period or every snapshot in a
+    # monthly commitment would qualify for the wrong deadline.
+    ok("the archive window is shorter than the longest period",
+       syw.ARCHIVE_WINDOW_SECONDS < syw.MAX_PERIOD_MINUTES * 60)
+    ok("the archive window is at least a day", syw.ARCHIVE_WINDOW_SECONDS >= 86400)
+    check("a sketch is four 64-bit lanes", syw.SKETCH_CHARS, 64)
+    ok("a shingle is more than one word", syw.SHINGLE_WORDS > 1)
+    ok("the wayback raw form is requested by the builder",
+       syw._wayback_raw("20260101000000", "https://e.com").endswith("id_/https://e.com"))
+
+    # Rates snapshotted at creation can never exceed the caps, whatever the
+    # owner sets, because both the write and the read clamp.
+    check("bounty cap holds", syw._split(10**18, 999999, syw.MAX_BOUNTY_BPS)[0],
+          (10**18 // syw.BPS_DENOM) * syw.MAX_BOUNTY_BPS)
+    check("cancel cap holds", syw._split(10**18, 999999, syw.MAX_CANCEL_FEE_BPS)[0],
+          (10**18 // syw.BPS_DENOM) * syw.MAX_CANCEL_FEE_BPS)
+
 
 for fn in (
     test_split,
@@ -563,6 +1131,18 @@ for fn in (
     test_frequency,
     test_utils,
     test_prompt,
+    test_sketch,
+    test_drift_bucket,
+    test_hex_only,
+    test_stamp,
+    test_snapshot_ok,
+    test_source_kind,
+    test_facts_agree,
+    test_leader_gates,
+    test_agree_conservative,
+    test_agree_evidence,
+    test_settle,
+    test_downgrade_note,
     test_invariants,
 ):
     fn()

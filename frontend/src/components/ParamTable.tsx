@@ -28,12 +28,16 @@ export function ParamTable() {
   }
 
   const rows: Array<[string, string]> = [
-    ["Finder's fee", pct(data.bounty_bps)],
-    ["Early-cancellation fee", pct(data.cancel_fee_bps)],
+    // The rates NEW commitments are created under. An existing commitment
+    // carries the rate it was created with; the owner cannot move it.
+    ["Finder's fee (new commitments)", pct(data.bounty_bps)],
+    ["Early-cancellation fee (new commitments)", pct(data.cancel_fee_bps)],
     ["Stake per period", `${gen(data.min_stake)} – ${gen(data.max_stake)}`],
     ["Period length", `${duration(data.min_period_minutes * 60)} – 30d`],
     ["Periods funded at once", `up to ${data.max_funded_periods}`],
     ["Open promises per wallet", `up to ${data.max_active_per_wallet}`],
+    ["Deadline-snapshot window", `±${duration(data.archive_window_seconds)}`],
+    ["In-flight verification lock", duration(data.verify_lock_seconds)],
     ["Currently staked", gen(data.locked_stakes)],
     ["Owner", shortAddress(data.owner)],
     ["New commitments", data.paused ? "paused" : "open"],

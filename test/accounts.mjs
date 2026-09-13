@@ -30,8 +30,9 @@ const force = process.argv.includes("--force");
 
 // `client` deploys and owns the contract. Committers make commitments,
 // beneficiaries receive forfeited stakes, `hunter` is the third party who calls
-// verify for the bounty, and `outsider` holds no role at all — it is what the
-// permission tests use. The counts are what the e2e suite needs at peak.
+// verify for the bounty, `outsider` holds no role at all — it is what the
+// permission tests use — and `empty` is never funded, on purpose. The counts
+// are what the e2e suite needs at peak.
 const ROLES = [
   "client",
   "committer1",
@@ -40,11 +41,16 @@ const ROLES = [
   "committer4",
   "committer5",
   "committer6",
+  "committer7",
+  "committer8",
   "beneficiary1",
   "beneficiary2",
   "beneficiary3",
   "hunter",
   "outsider",
+  // Deliberately never funded. TEST 13 reproduces the production
+  // LackOfFundForMaxFee against it and proves the preflight refuses first.
+  "empty",
 ];
 
 const existing = existsSync(target) && !force ? JSON.parse(readFileSync(target, "utf8")) : {};

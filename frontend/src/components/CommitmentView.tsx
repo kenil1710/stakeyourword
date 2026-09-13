@@ -7,7 +7,7 @@
  * the rail as a real timeline rather than a tally.
  */
 import Link from "next/link";
-import { ExternalLink, Link2, ShieldAlert } from "lucide-react";
+import { Archive, ExternalLink, Hourglass, Link2, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useChainNow, useCommitment } from "@/hooks/useChain";
 import { useWallet } from "./WalletProvider";
 import { PeriodRail, RailLegend } from "./PeriodRail";
@@ -94,6 +94,7 @@ export function CommitmentView({ id }: { id: number | null }) {
           stake goes to <AddressLink address={data.beneficiary} you={forMe} /> if broken
         </span>
         <span className="hint">made {absolute(data.created_at)}</span>
+        <SourceKind detail={data} />
       </div>
 
       {data.injection_flagged ? (
@@ -163,6 +164,26 @@ export function CommitmentView({ id }: { id: number | null }) {
         </div>
       </div>
 
+      {/* ── Settlement in flight ────────────────────────────────────────── */}
+      {data.verify_in_flight ? (
+        <div className="card-flat mt-5 border-rule bg-surface-2 p-4">
+          <p className="inline-flex items-center gap-2 text-[13px] font-semibold text-ink">
+            <Hourglass size={15} className="text-muted" aria-hidden />
+            A verification is in flight right now.
+          </p>
+          <p className="hint mt-1.5 max-w-2xl">
+            Somebody called <span className="mono">verify_commitment</span> and the network has not
+            finished. The contract holds a lock so two verifications cannot settle the same period;
+            it clears when the first one lands, or
+            {data.verify_lock_until && now
+              ? ` in about ${Math.max(0, data.verify_lock_until - now)}s if it never does.`
+              : " on its own if it never does."}{" "}
+            If it never settles, the period can still be closed after its grace window — the stake
+            comes back and the period is recorded as unverified.
+          </p>
+        </div>
+      ) : null}
+
       {/* ── What can be done right now ──────────────────────────────────── */}
       {data.action !== "" ? (
         <section className="card mt-6 border-accent/45 p-5">
@@ -200,9 +221,26 @@ export function CommitmentView({ id }: { id: number | null }) {
       <section className="mt-10 border-t border-rule pt-6">
         <p className="eyebrow mb-3">Page fingerprints</p>
         <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
-          <Fingerprint term="At creation" value={data.created_hash} />
+          <Fingerprint term="At creation" value={data.created_hash || "—"} />
           <Fingerprint term="At last verification" value={data.last_hash || "—"} />
         </dl>
+        {data.archive_url ? (
+          <p className="hint mt-3 inline-flex items-start gap-1.5">
+            <Archive size={12} className="mt-0.5 shrink-0" aria-hidden />
+            <span>
+              The committer pinned an immutable snapshot at creation, so every validator judges the
+              same fixed bytes:{" "}
+              <a
+                className="link-quiet mono break-all"
+                href={data.archive_url}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                {data.archive_url}
+              </a>
+            </span>
+          </p>
+        ) : null}
         {data.created_preview ? (
           <div className="sunk mt-4 p-4">
             <p className="eyebrow mb-2">What the page said when the promise was made</p>
@@ -214,7 +252,10 @@ export function CommitmentView({ id }: { id: number | null }) {
         <p className="hint mt-3 max-w-2xl">
           A hash that has not moved between two verifications is passed to the model as a note, not
           as a rule — plenty of live pages change every load, and a page that changed is usually the
-          committer doing what they said.
+          committer doing what they said. One thing it IS a rule about: a MET verdict on evidence
+          byte-identical to what this page said at creation is downgraded to inconclusive after
+          consensus and the stake comes back, because nothing new on the nominated page is not
+          evidence that anything was done.
         </p>
       </section>
 
@@ -246,6 +287,30 @@ function Cell({
       <p className="num mt-1.5 text-[17px] text-ink">{value}</p>
       {sub ? <p className="hint mt-1">{sub}</p> : null}
     </div>
+  );
+}
+
+/**
+ * How the proof source authenticates itself, decided on chain at creation.
+ *
+ * ATTESTED and ARCHIVED both mean the bytes cannot move under the claim. OPEN
+ * means an ordinary page, and the honest thing to say about one is that a
+ * decisive verdict on it needs validators to corroborate each other — which is
+ * exactly what the contract requires before any stake moves.
+ */
+function SourceKind({ detail }: { detail: { source_kind: string; archive_url: string } }) {
+  const copy: Record<string, string> = {
+    ATTESTED: "snapshot pinned at creation",
+    ARCHIVED: "content-addressed source",
+    OPEN: "open page — needs corroboration",
+  };
+  const label = copy[detail.source_kind];
+  if (!label) return null;
+  return (
+    <span className="hint inline-flex items-center gap-1.5">
+      <ShieldCheck size={12} aria-hidden />
+      {label}
+    </span>
   );
 }
 

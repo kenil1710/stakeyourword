@@ -5,7 +5,7 @@
  *   - `getWalletClient()` — browser-only, signs via an injected EIP-1193 wallet.
  */
 import { createClient } from "genlayer-js";
-import { studionet, testnetBradbury } from "genlayer-js/chains";
+import { studioDevnet, studionet, testnetBradbury } from "genlayer-js/chains";
 
 /**
  * Next inlines `process.env.NEXT_PUBLIC_*` at build time only for *literal*
@@ -21,12 +21,20 @@ const rawNetwork = process.env.NEXT_PUBLIC_NETWORK;
  * `isStudio`, which the SDK needs to poll transactions. A hand-written
  * `{ id, name, rpcUrls }` omits all of that and breaks receipt polling.
  */
-const CHAINS = { studionet, bradbury: testnetBradbury } as const;
+/**
+ * `studiodev` is the Studio Devnet (chain 61997), and it is the network this
+ * build targets: it is the only one running the v0.3.0 executor line that the
+ * contract's `# v0.3.0` header and `gl.contract.*` / `gl.storage.*` API need.
+ * Pointing this app at studionet or bradbury with the same contract source
+ * gets `invalid_contract runner malformed` — a runner-version mismatch, not a
+ * broken contract.
+ */
+const CHAINS = { studiodev: studioDevnet, studionet, bradbury: testnetBradbury } as const;
 
 export type NetworkName = keyof typeof CHAINS;
 
 function resolveNetwork(value: string | undefined): NetworkName {
-  if (!value) return "studionet";
+  if (!value) return "studiodev";
   if (value in CHAINS) return value as NetworkName;
   throw new Error(
     `NEXT_PUBLIC_NETWORK must be one of ${Object.keys(CHAINS).join(" | ")}, got: ${value}`,
@@ -36,15 +44,34 @@ function resolveNetwork(value: string | undefined): NetworkName {
 export const NETWORK = resolveNetwork(rawNetwork);
 export const chain = CHAINS[NETWORK];
 
-/** Studio is gasless — a 0 GEN balance still needs funding to STAKE, though. */
-export const IS_GASLESS = Boolean(chain.isStudio);
+/**
+ * Whether writes are free.
+ *
+ * NOT `chain.isStudio`. Studio Devnet runs a real fee policy and rejects a
+ * zero-fee transaction with `FeeValueMustBeNonZero`, so a wallet there needs a
+ * balance for exactly the same reason a Bradbury wallet does. Treating it as
+ * gasless is how a UI ends up telling someone their empty wallet is fine right
+ * before the consensus contract answers `LackOfFundForMaxFee`.
+ *
+ * Studionet is the only genuinely gasless network here.
+ */
+export const IS_GASLESS = NETWORK === "studionet";
+
+/** Studio networks carry a faucet; Bradbury needs the public one. */
+export const HAS_FAUCET = Boolean(chain.isStudio);
+export const FAUCET_URL = chain.isStudio ? null : "https://testnet-faucet.genlayer.foundation/";
 
 /** `chain.id` as the hex string EIP-1193 expects. Derived, never transcribed. */
 export const CHAIN_ID_HEX = `0x${chain.id.toString(16)}`;
 
-export const NETWORK_LABEL: string = { studionet: "Studionet", bradbury: "Bradbury" }[NETWORK];
+export const NETWORK_LABEL: string = {
+  studiodev: "Studio Devnet",
+  studionet: "Studionet",
+  bradbury: "Bradbury",
+}[NETWORK];
 
 const WALLET_NETWORK: Record<NetworkName, { name: string; explorer?: string }> = {
+  studiodev: { name: "GenLayer Studio Devnet" },
   studionet: { name: "GenLayer Studionet", explorer: "https://studio.genlayer.com" },
   bradbury: { name: "GenLayer Bradbury Testnet" },
 };
@@ -142,7 +169,9 @@ const STUDIO_PROXY_PATH = "/api/rpc";
  */
 function rpcUrl(): string {
   const direct = chain.rpcUrls.default.http[0];
-  if (NETWORK !== "studionet" || typeof window === "undefined") return direct;
+  // Both Studio endpoints meter per IP and drop CORS headers on the 429, so
+  // both go through the relay. Bradbury sets the headers on errors too.
+  if (!chain.isStudio || typeof window === "undefined") return direct;
   return STUDIO_PROXY_PATH;
 }
 
@@ -193,7 +222,18 @@ export async function ensureCorrectNetwork(): Promise<void> {
   await switchToNetwork();
 }
 
-export function explorerUrl(kind: "tx" | "address", value: string): string {
+/**
+ * A link to the transaction, or null when the network has no explorer.
+ *
+ * Studio Devnet ships no block explorer. Rendering `/tx/0x…` against an empty
+ * base produced a relative link to the app's own 404, which looks exactly like
+ * a broken receipt — so the absence is returned honestly and the caller shows
+ * the hash as copyable text instead.
+ */
+export function explorerUrl(kind: "tx" | "address", value: string): string | null {
   const base = chain.blockExplorers?.default?.url?.replace(/\/$/, "") ?? "";
+  if (!base) return null;
   return `${base}/${kind}/${value}`;
 }
+
+export const HAS_EXPLORER = Boolean(chain.blockExplorers?.default?.url);
