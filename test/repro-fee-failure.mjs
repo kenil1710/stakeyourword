@@ -280,40 +280,60 @@ check("execution finished with a return, not an error",
  * readable from the receipt — that is a property of the transport, not of the
  * contract, and the way to find the id is to read the chain's own state rather
  * than to treat an unreadable return as a failure.
+ *
+ * And state is only applied once the transaction is TERMINAL. A Bradbury
+ * transaction can sit in COMMITTING or APPEAL_COMMITTING for a long time with
+ * `txExecutionResultName` already reading FINISHED_WITH_RETURN — the contract
+ * ran, the round has not closed. Reading the commitment before then finds
+ * nothing, which is correct and is not a failure of the write.
  */
-const stats = JSON.parse(await read.readContract({ address: ADDRESS, functionName: "get_stats", args: [] }));
-const id = stats.total - 1;
-console.log(`\n  COMMITMENT`);
-console.log(`    contract now has ${stats.total} commitment(s); newest is #${id}`);
+const applied = status === "ACCEPTED" || status === "FINALIZED";
+let view = null;
 
-const view = JSON.parse(
-  await read.readContract({ address: ADDRESS, functionName: "get_commitment", args: [id] }),
-);
-check("the commitment exists on chain", view.found === true);
-check("it is ACTIVE", view.status === "ACTIVE", view.status);
-check("the committer is the funded wallet",
-  view.committer.toLowerCase() === who.account.address.toLowerCase(), view.committer);
-check("the stake is locked", view.total_staked === STAKE.toString(), gen(view.total_staked));
-check("a content hash was stored at creation", /^[0-9a-f]{16}$/.test(view.created_hash ?? ""),
-  view.created_hash ?? "—");
-console.log(`    id               #${view.id}`);
-console.log(`    committer        ${view.committer}`);
-console.log(`    staked           ${gen(view.total_staked)} over ${view.periods_funded} period(s)`);
-console.log(`    content hash     ${view.created_hash}`);
-console.log(`    next deadline    ${new Date(view.next_deadline * 1000).toISOString()}`);
+console.log(`\n  COMMITMENT`);
+if (!applied) {
+  console.log(`    the transaction is still ${status}, so no state is applied yet.`);
+  console.log(`    The contract executed — execution reads ${tx?.txExecutionResultName ?? "—"} —`);
+  console.log(`    but the round has not closed. Drive it with:`);
+  console.log(`\n      node nudge.mjs --tx=${hash} --network=${networkName}\n`);
+} else {
+  const stats = JSON.parse(
+    await read.readContract({ address: ADDRESS, functionName: "get_stats", args: [] }),
+  );
+  const id = stats.total - 1;
+  console.log(`    contract now has ${stats.total} commitment(s); newest is #${id}`);
+  if (id >= 0) {
+    view = JSON.parse(
+      await read.readContract({ address: ADDRESS, functionName: "get_commitment", args: [id] }),
+    );
+  }
+  check("the commitment exists on chain", Boolean(view?.found));
+  if (view?.found) {
+    check("it is ACTIVE", view.status === "ACTIVE", view.status);
+    check("the committer is the funded wallet",
+      view.committer.toLowerCase() === who.account.address.toLowerCase(), view.committer);
+    check("the stake is locked", view.total_staked === STAKE.toString(), gen(view.total_staked));
+    check("a content hash was stored at creation",
+      /^[0-9a-f]{16}$/.test(view.created_hash ?? ""), view.created_hash ?? "—");
+    console.log(`    id               #${view.id}`);
+    console.log(`    committer        ${view.committer}`);
+    console.log(`    staked           ${gen(view.total_staked)} over ${view.periods_funded} period(s)`);
+    console.log(`    content hash     ${view.created_hash}`);
+    console.log(`    next deadline    ${new Date(view.next_deadline * 1000).toISOString()}`);
+  }
+}
 
 /* ── Finalization ────────────────────────────────────────────────────────── */
 
 console.log(`\n  FINALIZATION`);
 if (status === "FINALIZED") {
   console.log(`    already FINALIZED`);
-} else {
+} else if (applied) {
   console.log(`    ACCEPTED — waiting for finalization (nudging as needed)…`);
   const finalBy = Date.now() + 900_000;
   while (Date.now() < finalBy) {
     const now = await read.getTransaction({ hash }).catch(() => null);
-    const name = transactionsStatusNumberToName[now?.status] ?? null;
-    if (name === "FINALIZED") {
+    if (transactionsStatusNumberToName[now?.status] === "FINALIZED") {
       status = "FINALIZED";
       break;
     }
@@ -322,8 +342,13 @@ if (status === "FINALIZED") {
     await sleep(20_000);
   }
   console.log(`    final status     ${status}`);
+} else {
+  console.log(`    not reached — the transaction has not been accepted yet.`);
 }
-check("the transaction finalized", status === "FINALIZED", status ?? "");
+// Only assert finalization when the transaction actually got that far. A round
+// that has not closed is a slow network, not a failed write, and reporting it
+// as a failure is exactly the confusion this whole script exists to clear up.
+if (applied) check("the transaction finalized", status === "FINALIZED", status ?? "");
 
 const after = await balanceOf(who.account.address);
 console.log(`\n    wallet before    ${gen(before)}`);
@@ -338,6 +363,6 @@ console.log(`\x1b[1m${results.length - failed.length} passed, ${failed.length} f
 for (const f of failed) console.log(`  \x1b[31m✗\x1b[0m ${f.label}`);
 console.log(`\n  create_commitment on ${chain.name}`);
 console.log(`    tx    ${hash}`);
-console.log(`    id    #${view.id}`);
+console.log(`    id    ${view?.found ? `#${view.id}` : "not applied yet"}`);
 console.log(`    state ${status}\n`);
 process.exit(failed.length ? 1 : 0);

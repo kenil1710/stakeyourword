@@ -31,8 +31,8 @@ const force = process.argv.includes("--force");
 // `client` deploys and owns the contract. Committers make commitments,
 // beneficiaries receive forfeited stakes, `hunter` is the third party who calls
 // verify for the bounty, `outsider` holds no role at all — it is what the
-// permission tests use — and `empty` is never funded, on purpose. The counts
-// are what the e2e suite needs at peak.
+// permission tests use — and `empty` is never funded on Studio, on purpose. The
+// counts are what the e2e suite needs at peak.
 const ROLES = [
   "client",
   "committer1",
@@ -48,8 +48,14 @@ const ROLES = [
   "beneficiary3",
   "hunter",
   "outsider",
-  // Deliberately never funded. TEST 13 reproduces the production
-  // LackOfFundForMaxFee against it and proves the preflight refuses first.
+  // Never funded by this script, and never by the e2e's Studio faucet loop:
+  // TEST 13 reproduces the production LackOfFundForMaxFee against it on
+  // studio-dev and proves the preflight refuses first.
+  //
+  // It IS funded on Bradbury, by hand, because the review asked for a funded
+  // Bradbury reproduction and Bradbury has no faucet call — only a
+  // Cloudflare-gated web form. `repro-fee-failure.mjs` uses it as the funded
+  // wallet there and `outsider` as the empty one.
   "empty",
 ];
 
