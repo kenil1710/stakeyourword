@@ -53,7 +53,7 @@ signed.
 | Execution | `FINISHED_WITH_RETURN` |
 | Commitment | **#0** — ACTIVE, 0.1 GEN staked, content hash `4c2003369458be3f` |
 | Committer | `0x28Be0f914219422fA0F46F201f47D8356B3eCeC0` |
-| Wallet | 3 GEN → 2.896934 GEN (0.1 stake + 0.003 in fees and nudges) |
+| Wallet | 3 GEN → 2.896934 GEN at acceptance — but see §4, the stake comes back |
 
 **3 · The part I did not stage: it got stuck, and the nudge flow recovered it.**
 
@@ -515,10 +515,19 @@ The verdicts the network actually reached, on the fixtures:
 
 ```bash
 cd test
-python3 test_logic.py              # 11,000+ offline assertions, no network
+python3 test_logic.py              # 9,103 offline assertions, no network
 node audit.mjs                     # the rejection-pattern audit, source + live
-node repro-fee-failure.mjs --network=bradbury   # the reported failure, reproduced
 node e2e.mjs --base=https://stakeyourword.vercel.app
+
+# the reported failure, and the funded Bradbury reproduction
+node repro-fee-failure.mjs --network=bradbury
+node nudge.mjs --tx=0x… --network=bradbury [--until=finalized]
+node bradbury-value-probe.mjs      # does the stake reach the contract? (§4)
+
+# the proof runs on studio-dev
+node proof-commitments.mjs
+node proof-archive.mjs
+node probe.mjs
 ```
 
 One operational note that is not a fix but caused most of the wall-clock cost:

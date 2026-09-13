@@ -133,7 +133,7 @@ See [`frontend/src/lib/fees.ts`](frontend/src/lib/fees.ts) and
 
 ## Running the tests
 
-### Contract logic — 11,000+ assertions, no network
+### Contract logic — 9,103 assertions, no network
 
 ```bash
 cd test
