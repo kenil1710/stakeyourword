@@ -279,11 +279,22 @@ asked for explicitly in the prompt, because a prompt that does not ask makes the
 feature vector empty and silently drops a consensus condition. There is an
 offline test for that.
 
-**The decision table is module-level and pure.** `_leader_rejectable` and
-`_agree` are ordinary functions of the leader's calldata and the validator's own
-judgement, so `test/test_logic.py` walks every branch in milliseconds. The code
-that decides who keeps a stake should not be reachable only through a live
+**The decision table is module-level and pure.** `_leader_rejectable`, `_agree`
+and `_settle` are ordinary functions of the leader's calldata and the validator's
+own judgement, so `test/test_logic.py` walks every branch in milliseconds. The
+code that decides who keeps a stake should not be reachable only through a live
 consensus round.
+
+Two property sweeps over the whole combination space assert the laws rather than
+the cases, because individual branch tests can all pass while the combination
+still lets something through:
+
+- no decisive verdict is ever agreed to by a validator that retrieved nothing —
+  the review's finding, as an invariant — nor across two different kinds of
+  evidence, nor across a drift bucket, nor on archived evidence that hashed
+  differently;
+- no settlement ever moves money without identifiable, corroborated evidence,
+  whatever junk the agreed payload contains.
 
 ## FIX 7 — conservative resolution
 
@@ -335,7 +346,7 @@ explanations) and live against the deployment.
 
 ```bash
 cd test
-python3 test_logic.py              # 505 offline assertions, no network
+python3 test_logic.py              # 11,000+ offline assertions, no network
 node audit.mjs                     # the rejection-pattern audit, source + live
 node repro-fee-failure.mjs --network=bradbury   # the reported failure, reproduced
 node e2e.mjs --base=https://stakeyourword.vercel.app

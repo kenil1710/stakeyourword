@@ -1050,6 +1050,107 @@ def test_downgrade_note():
        "byte-identical" in syw._downgrade_note(syw.VERDICT_INCONCLUSIVE, syw.EVIDENCE_LIVE, True))
 
 
+# ── The property that has to hold however the pieces are combined ───────────
+# Individual branch tests can all pass while the combination still lets a
+# decisive verdict through on nothing. This walks the whole space instead.
+
+def test_no_decisive_without_corroboration():
+    verdicts = (syw.VERDICT_MET, syw.VERDICT_NOT_MET, syw.VERDICT_INCONCLUSIVE)
+    kinds = (syw.EVIDENCE_ARCHIVE, syw.EVIDENCE_LIVE, syw.EVIDENCE_NONE)
+    hashes = ("a" * 16, "c" * 16)
+    drifts = (100, 6000, 9900)
+    flags = (True, False)
+
+    rng = random.Random(20260913)
+    checked = 0
+    for _ in range(4000):
+        theirs = rng.choice(verdicts)
+        mine_verdict = rng.choice(verdicts)
+        leader = {
+            "verdict": theirs, "reasoning": GOOD_REASON, "confidence": 70,
+            "reachable": rng.choice(flags), "kind": rng.choice(kinds),
+            "snap_url": "", "hash": rng.choice(hashes), "sketch": "b" * 64,
+            "drift": rng.choice(drifts), "dated": rng.choice(flags),
+            "artifact": rng.choice(flags), "addressed": rng.choice(flags),
+        }
+        mine = {
+            "verdict": mine_verdict, "reachable": rng.choice(flags),
+            "kind": rng.choice(kinds), "hash": rng.choice(hashes),
+            "drift": rng.choice(drifts), "dated": rng.choice(flags),
+            "artifact": rng.choice(flags), "addressed": rng.choice(flags),
+        }
+        if not syw._agree(leader, mine):
+            continue
+        checked += 1
+        decisive = theirs != syw.VERDICT_INCONCLUSIVE
+
+        # 1. A decisive verdict is never agreed to by a validator that
+        #    retrieved nothing. This is the review's finding, as a law.
+        if decisive:
+            ok("a blind validator never agrees to a decisive verdict", mine["reachable"])
+            # 2. And never without reaching the same verdict independently.
+            ok("agreement on a decisive verdict means the verdicts matched",
+               mine["verdict"] == theirs)
+            # 3. And never across two different kinds of evidence.
+            ok("agreement on a decisive verdict means the same evidence kind",
+               leader["kind"] == mine["kind"])
+            # 4. And never on archived evidence that hashed differently.
+            if leader["kind"] == syw.EVIDENCE_ARCHIVE:
+                ok("matching archives means matching bytes", leader["hash"] == mine["hash"])
+            # 5. And never across a drift bucket.
+            ok("agreement on a decisive verdict means the same drift bucket",
+               syw._drift_bucket(leader["drift"]) == syw._drift_bucket(mine["drift"]))
+
+        # 6. A leader that claims no evidence can only ever carry INCONCLUSIVE
+        #    past this point.
+        if not leader["reachable"]:
+            ok("a leader with no evidence only ever agrees on INCONCLUSIVE",
+               theirs == syw.VERDICT_INCONCLUSIVE)
+
+    ok("the sweep actually found agreeing pairs to check", checked > 100)
+
+
+def test_settle_never_pays_out_on_nothing():
+    # The same idea one layer down: whatever the agreed payload says, a verdict
+    # that moves money must come with evidence the contract could identify.
+    rng = random.Random(981)
+    made_hash = "1234567890abcdef"
+    made_sketch = syw._sketch("the page as it read when the promise was made here today")
+    due = syw._epoch_from_iso("2026-08-28T00:00:00Z")
+
+    for _ in range(2000):
+        result = {
+            "verdict": rng.choice(["MET", "NOT_MET", "INCONCLUSIVE", "LAPSED", "", "yes", None]),
+            "reasoning": GOOD_REASON,
+            "confidence": rng.choice([0, 50, 100, 9999, -1, "x"]),
+            "reachable": rng.choice([True, False]),
+            "kind": rng.choice(["ARCHIVE", "LIVE", "NONE", "", "OTHER"]),
+            "snap_url": rng.choice(["", "https://evil.example/x",
+                                    syw._wayback_raw(syw._stamp_from_epoch(due), URL)]),
+            "hash": rng.choice(["", made_hash, "a" * 16, "zzzz"]),
+            "sketch": rng.choice(["", made_sketch, "b" * 64, "nope"]),
+        }
+        out = syw._settle(result, URL, "", due, made_hash, made_sketch)
+
+        ok("the settled verdict is always one of the four",
+           out["verdict"] in (syw.VERDICT_MET, syw.VERDICT_NOT_MET, syw.VERDICT_INCONCLUSIVE))
+        if out["verdict"] != syw.VERDICT_INCONCLUSIVE:
+            # Money only ever moves against identifiable, corroborated evidence.
+            ok("a decisive settlement always has an evidence kind",
+               out["kind"] in (syw.EVIDENCE_ARCHIVE, syw.EVIDENCE_LIVE))
+            ok("a decisive settlement always has a valid hash",
+               len(out["hash"]) == 16)
+            ok("a decisive settlement is always marked corroborated", out["corroborated"])
+            ok("a decisive settlement always reports reachable", out["reachable"])
+        ok("a MET settlement is never on unchanged-since-creation evidence",
+           not (out["verdict"] == syw.VERDICT_MET and out["stale"]))
+        ok("the stored reasoning always suits the stored verdict",
+           syw._coherent(out["verdict"], out["reasoning"]))
+        ok("the stored hash is always hex or empty",
+           out["hash"] == "" or syw._hex_only(out["hash"], 16) == out["hash"])
+        ok("drift is always in range", 0 <= out["drift"] <= syw.BPS_DENOM)
+
+
 # ── Invariants between constants ────────────────────────────────────────────
 
 def test_invariants():
@@ -1143,6 +1244,8 @@ for fn in (
     test_agree_evidence,
     test_settle,
     test_downgrade_note,
+    test_no_decisive_without_corroboration,
+    test_settle_never_pays_out_on_nothing,
     test_invariants,
 ):
     fn()

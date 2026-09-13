@@ -127,7 +127,7 @@ See [`frontend/src/lib/fees.ts`](frontend/src/lib/fees.ts) and
 
 ## Running the tests
 
-### Contract logic — 505 assertions, no network
+### Contract logic — 11,000+ assertions, no network
 
 ```bash
 cd test
@@ -137,10 +137,22 @@ python3 test_logic.py
 Pure-function coverage of the fee split, the coherence gate, the content hash and
 the shingle sketch, drift buckets, archive-snapshot validation, source
 classification, the feature vector, defanging and fence-forgery, the civil-date
-maths, the period schedule — and every branch of the consensus decision table
+maths and the period schedule — plus every branch of the consensus decision table
 (`_leader_rejectable`, `_agree`) and the post-consensus recomputation
 (`_settle`). Those three are module-level and pure precisely so the code that
 decides who keeps a stake is not reachable only through a live consensus round.
+
+The bulk of the count is two property sweeps over the whole combination space,
+because individual branch tests can all pass while the combination still lets
+something through. They assert the laws rather than the cases:
+
+- **no decisive verdict is ever agreed to by a validator that retrieved
+  nothing** — the review's finding, as an invariant — nor across two different
+  kinds of evidence, nor across a drift bucket, nor on archived evidence that
+  hashed differently;
+- **no settlement ever moves money without identifiable, corroborated
+  evidence**, whatever junk the agreed payload contains, and the stored
+  reasoning always suits the stored verdict.
 
 ### The standing audit
 
