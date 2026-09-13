@@ -983,24 +983,27 @@ def test_settle():
                         URL, pinned, due, made_hash, made_sketch)
     check("the pinned snapshot is kept", right["kind"], syw.EVIDENCE_ARCHIVE)
 
-    # FIX 4 with teeth: nothing new on the nominated page is not evidence that
-    # anything was done, so a MET on byte-identical content is downgraded.
+    # A page unchanged since creation is FLAGGED, never judged. Only the promise
+    # text says whether that means nothing happened or means it held, and the
+    # contract never reads the promise — so the verdict stands either way and
+    # the flag goes on the record for the model and the UI to use.
     stale = syw._settle(_leader(hash=made_hash), URL, "", due, made_hash, made_sketch)
-    check("MET on unchanged-since-creation is downgraded", stale["verdict"],
-          syw.VERDICT_INCONCLUSIVE)
-    check("the downgrade is flagged", stale["stale"], True)
-    ok("the downgrade explains itself", "byte-identical" in stale["reasoning"])
-    # NOT_MET on the same page is untouched: the page not moving is exactly
-    # what a broken promise looks like.
-    check("NOT_MET on unchanged content is left alone",
+    check("unchanged-since-creation is flagged", stale["stale"], True)
+    check("but a MET verdict still stands", stale["verdict"], syw.VERDICT_MET)
+    check("and the reasoning it was written for is kept", stale["reasoning"], GOOD_REASON)
+    check("NOT_MET on unchanged content is left alone too",
           syw._settle(_leader(verdict=syw.VERDICT_NOT_MET, hash=made_hash,
                               reasoning="Nothing on this page has changed and no work from "
                                         "this period appears anywhere on it."),
                       URL, "", due, made_hash, made_sketch)["verdict"],
           syw.VERDICT_NOT_MET)
+    check("a changed page is not flagged",
+          syw._settle(_leader(hash="f" * 16), URL, "", due, made_hash, made_sketch)["stale"],
+          False)
 
     # The stored reasoning must always describe the stored verdict.
-    moved = syw._settle(_leader(hash=made_hash), URL, "", due, made_hash, made_sketch)
+    moved = syw._settle(_leader(reachable=False, verdict=syw.VERDICT_MET), URL, "", due,
+                        made_hash, made_sketch)
     ok("prose written for a replaced verdict is discarded", moved["reasoning"] != GOOD_REASON)
     incoherent = syw._settle(
         _leader(reasoning="The commitment was not met and nothing here shows otherwise."),
@@ -1046,8 +1049,10 @@ def test_downgrade_note():
 
     ok("the no-evidence note names the cause",
        "post-consensus" in syw._downgrade_note(syw.VERDICT_INCONCLUSIVE, syw.EVIDENCE_NONE, False))
-    ok("the stale note names the cause",
-       "byte-identical" in syw._downgrade_note(syw.VERDICT_INCONCLUSIVE, syw.EVIDENCE_LIVE, True))
+    ok("an unchanged page is mentioned when it applies",
+       "byte-identical" in syw._downgrade_note(syw.VERDICT_MET, syw.EVIDENCE_LIVE, True))
+    ok("and not mentioned when it does not",
+       "byte-identical" not in syw._downgrade_note(syw.VERDICT_MET, syw.EVIDENCE_LIVE, False))
 
 
 # ── The property that has to hold however the pieces are combined ───────────
@@ -1142,8 +1147,6 @@ def test_settle_never_pays_out_on_nothing():
                len(out["hash"]) == 16)
             ok("a decisive settlement is always marked corroborated", out["corroborated"])
             ok("a decisive settlement always reports reachable", out["reachable"])
-        ok("a MET settlement is never on unchanged-since-creation evidence",
-           not (out["verdict"] == syw.VERDICT_MET and out["stale"]))
         ok("the stored reasoning always suits the stored verdict",
            syw._coherent(out["verdict"], out["reasoning"]))
         ok("the stored hash is always hex or empty",

@@ -118,10 +118,11 @@ export default function DocsPage() {
           nothing but its own word is the hole that rule closes.
         </p>
         <p>
-          One more rule runs after consensus, on the contract&apos;s own arithmetic rather than
-          anybody&apos;s report of it: <strong>a kept verdict on evidence byte-identical to what the
-          page said at creation is downgraded to inconclusive</strong> and the stake comes back.
-          Nothing new on the page you nominated is not evidence that anything was done.
+          A page that has not moved at all since you made the promise is <strong>flagged, not
+          judged</strong>. The model is told so explicitly, the drift is recorded on chain, and
+          every validator has to agree on it — but the verdict stands either way, because only the
+          promise itself says whether an unchanged page means nothing happened or means it held,
+          and the contract never reads the promise.
         </p>
       </Section>
 

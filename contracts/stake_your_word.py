@@ -519,13 +519,11 @@ def _downgrade_note(verdict: str, kind: str, stale: bool) -> str:
 		return ("No evidence for this deadline survived the post-consensus checks, so the "
 				"period is recorded as INCONCLUSIVE and the stake was returned. An unread "
 				"page is not a broken promise.")
-	if stale:
-		return ("The proof page is byte-identical to what it said when the commitment was "
-				"made, so nothing on it is evidence that anything was done in this period. "
-				"Recorded as INCONCLUSIVE and the stake was returned.")
+	tail = (" The evidence was byte-identical to what the page said when the commitment "
+			"was made.") if stale else ""
 	return ("The verdict was re-derived after consensus and no longer matches the reasoning "
 			"submitted with it, so that reasoning was discarded. The recorded verdict is "
-			+ verdict + ".")
+			+ verdict + "." + tail)
 
 
 def _leader_rejectable(data, url: str, archive_url: str, due: int) -> bool:
@@ -632,11 +630,11 @@ def _settle(result, url: str, archive_url: str, due: int, made_hash: str,
 	# Drift is RECOMPUTED from the sketch stored AT CREATION, so the number on
 	# the record is the contract's own arithmetic and not the leader's claim.
 	drift = _sketch_sim(made_sketch, sketch)
-	# Nothing new on the page the committer nominated is not evidence that
-	# anything was done in this period. Downgrade rather than pay out on it.
+	# Whether the evidence is byte-identical to what the page said at creation.
+	# RECORDED and fed to the prompt, never a gate: only the promise text says
+	# whether an unchanged page means nothing happened or means it held. See
+	# NOTES.md § "Drift, and what a frozen page means".
 	stale = bool(made_hash and fresh and made_hash == fresh)
-	if verdict == VERDICT_MET and stale:
-		verdict = VERDICT_INCONCLUSIVE
 	reasoning = str(result.get("reasoning", ""))[:MAX_REASONING_CHARS]
 	if verdict != claimed or not _coherent(verdict, reasoning):
 		reasoning = _downgrade_note(verdict, kind, stale)

@@ -361,13 +361,37 @@ validators can compare buckets, but the number that reaches storage is the
 contract's own arithmetic — a leader cannot understate how far the proof page has
 moved.
 
-**A frozen page cannot pay out.** After consensus, a MET verdict on evidence
-byte-identical to what the page said at creation is downgraded to INCONCLUSIVE
-and the stake goes back. Nothing new on the page the committer nominated is not
-evidence that anything was done in the period. The rule is deterministic (it
-compares two stored hashes), it only ever moves a verdict toward the outcome that
-costs nobody their stake, and NOT_MET on the same page is left alone — a page
-that did not move is exactly what a broken promise looks like.
+**A frozen page is flagged, not judged — and this one was tried the other way
+round first.**
+
+The rule that shipped for an afternoon was: after consensus, a MET verdict on
+evidence byte-identical to what the page said at creation is downgraded to
+INCONCLUSIVE. It is deterministic, it only ever moves a verdict toward the
+outcome that costs nobody their stake, and for "publish something weekly" it is
+plainly right — nothing new on the nominated page is not evidence that anything
+was done.
+
+It is wrong for "my status page will still say all systems operational". There
+the page not moving IS the promise kept, and the rule took a correct MET off a
+committer who had done exactly what they said. The live run that caught it is
+worth keeping: verdict MET at confidence 85, `dated_in_window` true,
+`artifact_found` true, drift 10000, corroborated — every signal agreeing, and the
+contract overruling all of them on a hash comparison.
+
+The discriminator between those two cases is the PROMISE TEXT, which the contract
+cannot read and the model can. So the frozen page is:
+
+- passed into the prompt as an explicit note at both extremes (unchanged since
+  creation, or substantially rewritten);
+- recorded on the row as `unchanged` and as a recomputed `drift_bps`;
+- **compared between validators** as a drift bucket, so a leader cannot
+  misreport it;
+- shown in the UI next to the verdict.
+
+That is "flag it, don't blindly accept" without the contract pretending to
+classify a promise it never read. NOT_MET on an unchanged page needs no special
+handling either way — a page that did not move is exactly what a broken promise
+looks like.
 
 ## Authenticated sources
 

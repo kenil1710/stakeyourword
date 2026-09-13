@@ -13,7 +13,7 @@ says — in the same transaction, with no owner in the loop.
 
 | | |
 |---|---|
-| Contract | `0xF21613D665AE004204397723b393Baaee23CF623` |
+| Contract | `0xA6CEc813955e78F7B71969FB909646530D61006A` |
 | Network | Studio Devnet (chain id `61997`, `https://studio-dev.genlayer.com/api`) |
 | Runner | `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` (v0.3.0) |
 | Contract source | [`contracts/stake_your_word.py`](contracts/stake_your_word.py) |
@@ -89,10 +89,11 @@ is re-checked, drift is recomputed from the creation fingerprint, confidence is
 clamped, and reasoning written for a verdict that has since moved is replaced
 rather than stored next to a contradiction.
 
-One rule runs there on the contract's own arithmetic: **a MET verdict on evidence
-byte-identical to what the page said at creation is downgraded to inconclusive**
-and the stake comes back. Nothing new on the nominated page is not evidence that
-anything was done.
+A page that has not moved since the promise was made is **flagged, not judged**:
+the model is told explicitly, the drift is recorded, and validators compare the
+drift bucket so a leader cannot misreport it. It is not a hard rule, because only
+the promise text says whether an unchanged page means nothing happened or means
+it held — and the contract never reads the promise.
 
 An unreachable page is always `INCONCLUSIVE`, never `NOT_MET` — a site going down
 cannot cost anyone their stake.

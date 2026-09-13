@@ -4,7 +4,7 @@ Every point in the review, what was actually wrong, and what to run to check it.
 
 | | |
 |---|---|
-| Contract | `0xF21613D665AE004204397723b393Baaee23CF623` |
+| Contract | `0xA6CEc813955e78F7B71969FB909646530D61006A` |
 | Network | GenLayer **Studio Devnet** — chain `61997`, `https://studio-dev.genlayer.com/api` |
 | Runner | `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` (v0.3.0) |
 | App | https://stakeyourword.vercel.app |
@@ -214,12 +214,26 @@ The old code had a comment admitting this gap. It is closed.
   page has no authenticated origin, so nothing fetched over it can be attributed
   to the publisher the committer named, and attribution is the entire point of
   nominating a page.
-- **Changed content is flagged, and a frozen page cannot pay out.** After
-  consensus, a MET verdict on evidence byte-identical to what the page said at
-  creation is **downgraded to INCONCLUSIVE** and the stake comes back. Nothing new
-  on the nominated page is not evidence that anything was done. The rule compares
-  two values the contract already stores, so it is deterministic, and it only
-  ever moves a verdict toward the outcome that costs nobody their stake.
+- **Changed content is flagged** — and I want to record a rule I wrote, shipped,
+  watched fail on a live run, and took back out.
+
+  The rule was: after consensus, a MET verdict on evidence byte-identical to what
+  the page said at creation is downgraded to INCONCLUSIVE. Deterministic, only
+  ever moves a verdict toward the outcome that costs nobody their stake, and
+  plainly right for "publish something weekly".
+
+  It is wrong for "my status page will still say all systems operational". There
+  the page not moving IS the promise kept. The live run that caught it: verdict
+  MET at confidence 85, `dated_in_window` true, `artifact_found` true, drift
+  10000, corroborated by the validators — every signal agreeing, and the contract
+  overruling all of them on a hash comparison.
+
+  The discriminator is the promise text, which the model reads and the contract
+  does not. So an unchanged page is now passed into the prompt as an explicit
+  note, recorded as `unchanged` and a recomputed `drift_bps`, **compared between
+  validators as a drift bucket** so a leader cannot misreport it, and shown in
+  the UI next to the verdict. That is "flag it, don't blindly accept" without the
+  contract pretending to classify a promise it never read.
 
 One thing I tried and dropped: `gl.nondet.web.get(..., sign=True)` would let a
 publisher verify a request came from the contract. Studio Devnet answers

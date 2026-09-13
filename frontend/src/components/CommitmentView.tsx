@@ -252,10 +252,11 @@ export function CommitmentView({ id }: { id: number | null }) {
         <p className="hint mt-3 max-w-2xl">
           A hash that has not moved between two verifications is passed to the model as a note, not
           as a rule — plenty of live pages change every load, and a page that changed is usually the
-          committer doing what they said. One thing it IS a rule about: a MET verdict on evidence
-          byte-identical to what this page said at creation is downgraded to inconclusive after
-          consensus and the stake comes back, because nothing new on the nominated page is not
-          evidence that anything was done.
+          committer doing what they said. A page that has not moved at all since the promise was
+          made is flagged rather than judged: the model is told explicitly, the drift is recorded,
+          and every validator has to agree on it — but only the promise itself says whether an
+          unchanged page means nothing happened or means it held, and the contract never reads the
+          promise.
         </p>
       </section>
 

@@ -338,17 +338,25 @@ if (WRITE_ENV) {
      * The regex form is used so a missing key is an error rather than a silent
      * no-op.
      */
-    let updated = env.replace(
-      /^NEXT_PUBLIC_CONTRACT_ADDRESS\s*=.*$/m,
-      `NEXT_PUBLIC_CONTRACT_ADDRESS=${address}`,
-    );
-    if (updated === env) throw new Error("NEXT_PUBLIC_CONTRACT_ADDRESS not found in .env.local");
-    const withNetwork = updated.replace(
-      /^NEXT_PUBLIC_NETWORK\s*=.*$/m,
-      `NEXT_PUBLIC_NETWORK=${networkName}`,
-    );
-    if (withNetwork === updated) throw new Error("NEXT_PUBLIC_NETWORK not found in .env.local");
-    writeFileSync(envPath, withNetwork);
+    /*
+     * Presence is checked with a match, not by comparing before and after.
+     * Writing a value identical to the one already there produces an identical
+     * string, which is indistinguishable from "the key was missing" — so the
+     * before/after form threw on the most ordinary case there is: redeploying
+     * to the same network.
+     */
+    const keys = [
+      [/^NEXT_PUBLIC_CONTRACT_ADDRESS\s*=.*$/m, `NEXT_PUBLIC_CONTRACT_ADDRESS=${address}`],
+      [/^NEXT_PUBLIC_NETWORK\s*=.*$/m, `NEXT_PUBLIC_NETWORK=${networkName}`],
+    ];
+    let updated = env;
+    for (const [pattern, line] of keys) {
+      if (!pattern.test(updated)) {
+        throw new Error(`${line.split("=")[0]} not found in .env.local`);
+      }
+      updated = updated.replace(pattern, line);
+    }
+    writeFileSync(envPath, updated);
     console.log(`wrote ${address} on ${networkName} to frontend/.env.local`);
   }
 }
