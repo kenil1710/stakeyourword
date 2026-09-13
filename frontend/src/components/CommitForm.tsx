@@ -102,7 +102,7 @@ export function CommitForm() {
             recurring: draft.recurring,
             value,
           }),
-    [draft, minutes, stakeWei, periods, value, account],
+    [draft, minutes, stakeWei, value, account],
   );
 
   async function submit(event: React.FormEvent) {
@@ -487,10 +487,21 @@ function PreflightPanel({
   stakeWei: bigint | null;
   value: bigint | null;
 }) {
-  const [chain, setChain] = useState<Preflight | null>(null);
-  const [fee, setFee] = useState<Quote | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState("");
+  /*
+   * ONE state object, tagged with the draft it describes.
+   *
+   * Clearing three pieces of state synchronously when the draft changes is a
+   * cascading render — and worse, it briefly showed a stale verdict against a
+   * draft that had already moved on. Tagging the answer with the key it was
+   * computed for means a stale answer simply is not rendered, and the effect
+   * only ever writes state from inside its own async callback.
+   */
+  const [answer, setAnswer] = useState<{
+    forKey: string;
+    chain: Preflight | null;
+    fee: Quote | null;
+    failed: string;
+  } | null>(null);
 
   const key =
     account && call && ready && stakeWei !== null && value !== null
@@ -499,18 +510,11 @@ function PreflightPanel({
       : null;
 
   useEffect(() => {
-    if (!key || !account || !call || stakeWei === null || value === null) {
-      setChain(null);
-      setFee(null);
-      setFailed("");
-      return;
-    }
+    if (!key || !account || !call || stakeWei === null || value === null) return;
     let cancelled = false;
-    // Debounced: this runs on every keystroke of a valid draft, and both calls
-    // are network round trips.
+    // Debounced: this would otherwise run on every keystroke of a valid draft,
+    // and both calls are network round trips.
     const timer = setTimeout(async () => {
-      setBusy(true);
-      setFailed("");
       try {
         const [onChain, quoted] = await Promise.all([
           preflightCreate({
@@ -526,13 +530,16 @@ function PreflightPanel({
           }),
           quote(account, call).catch(() => null),
         ]);
-        if (cancelled) return;
-        setChain(onChain);
-        setFee(quoted);
+        if (!cancelled) setAnswer({ forKey: key, chain: onChain, fee: quoted, failed: "" });
       } catch (e) {
-        if (!cancelled) setFailed(String((e as { message?: string })?.message ?? e));
-      } finally {
-        if (!cancelled) setBusy(false);
+        if (!cancelled) {
+          setAnswer({
+            forKey: key,
+            chain: null,
+            fee: null,
+            failed: String((e as { message?: string })?.message ?? e),
+          });
+        }
       }
     }, 700);
     return () => {
@@ -543,9 +550,15 @@ function PreflightPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
+  // An answer computed for a different draft is not an answer to this one.
+  const current = answer && answer.forKey === key ? answer : null;
+  const chain = current?.chain ?? null;
+  const fee = current?.fee ?? null;
+  const failed = current?.failed ?? "";
+
   if (!key) return null;
 
-  if (busy && !chain) {
+  if (!current) {
     return (
       <div className="card-flat mt-4 flex items-center gap-2 p-4 text-[13px] text-ink-2">
         <LoaderCircle size={14} className="animate-spin" aria-hidden />
