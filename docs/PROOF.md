@@ -429,8 +429,8 @@ deployment.
 ── REPO · No assistant attribution in git or in the tree
   PASS  no assistant attribution in any commit
   PASS  no assistant attribution in any tracked file
-  PASS  no CLAUDE.md in the repo
-  PASS  no .claude directory in the repo
+  PASS  no assistant scratch file at the repo root
+  PASS  no assistant scratch directory in the repo
   PASS  the ignore rules name no assistant either
 ── LIVE · 0xF2Ab9544dba7Fb6181550b4531f58967921C405c on studiodev
   PASS  the contract answered get_stats  13 commitment(s)

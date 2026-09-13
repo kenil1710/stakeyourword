@@ -373,8 +373,16 @@ section("REPO · No assistant attribution in git or in the tree");
   check("no assistant attribution in any tracked file", tracked.trim() === "",
     tracked.trim().split("\n").slice(0, 3).join(" | "));
 
-  check("no CLAUDE.md in the repo", !existsSync(new URL("../CLAUDE.md", import.meta.url)));
-  check("no .claude directory in the repo", !existsSync(new URL("../.claude", import.meta.url)));
+  /*
+   * The check LABELS deliberately avoid naming the tool, even though the paths
+   * below must. This file is the one place the grep above excludes; its output
+   * is not — and pasting an audit transcript into the repo put the string
+   * straight back into the tree it had just certified clean.
+   */
+  check("no assistant scratch file at the repo root",
+    !existsSync(new URL("../CLAUDE.md", import.meta.url)));
+  check("no assistant scratch directory in the repo",
+    !existsSync(new URL("../.claude", import.meta.url)));
   // Including the ignore rules: a rule naming the tool is still the tool's
   // name in the tracked tree, and a reviewer grepping for it will find it.
   check("the ignore rules name no assistant either",
