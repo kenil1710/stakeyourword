@@ -5,10 +5,13 @@
   "description": "Integration harness for the StakeYourWord contract on Studio Devnet, Studionet and Bradbury.",
   "scripts": {
     "logic": "python3 test_logic.py",
+    "audit": "node audit.mjs",
     "accounts": "node accounts.mjs",
     "deploy": "node deploy.mjs",
     "e2e": "node e2e.mjs",
-    "preflight": "node preflight.mjs"
+    "repro": "node repro-fee-failure.mjs --network=bradbury",
+    "proof": "node proof-commitments.mjs",
+    "proof:archive": "node proof-archive.mjs"
   },
   "dependencies": {
     "genlayer-js": "2.0.0-rc.1"

@@ -186,46 +186,51 @@ export function useTx() {
   /* ── The watch loop ─────────────────────────────────────────────────────
    * Runs only while a transaction is in flight, and stops itself at WATCH_MS
    * rather than polling an endpoint forever behind a tab nobody is looking at.
+   *
+   * The dependencies are deliberately narrow — the phase, the hash, and whether
+   * it has gone stuck. Depending on the whole state would tear the interval
+   * down and rebuild it on every tick, because every tick writes `elapsed`, and
+   * a timer that restarts before it fires is a timer that fires late. Anything
+   * else the callback needs is read through the functional `setState` form,
+   * which cannot go stale.
    */
   useEffect(() => {
-    const { phase, hash } = state;
+    const { phase, hash, stuck } = state;
     if (!hash) return;
     if (phase !== "pending" && phase !== "accepted") return;
-    if (state.stuck) return;
+    if (stuck) return;
 
     let cancelled = false;
     const timer = setInterval(async () => {
-      const elapsed = Math.floor((Date.now() - startedAt.current) / 1000);
       if (cancelled || !live.current) return;
-
       const snap = await pollTx(hash);
       if (cancelled || !live.current) return;
 
+      const elapsed = Math.floor((Date.now() - startedAt.current) / 1000);
       const next = apply(snap, hash);
-      if (next) {
-        setState({ ...next, quote: state.quote, nudges: state.nudges, elapsed });
-        if (next.phase !== "error") refreshAll();
-        return;
-      }
-      // Still in flight. Keep the clock honest, and surrender the controls
-      // once the watch window is up.
-      setState((prev) =>
-        prev.hash === hash
-          ? {
-              ...prev,
-              status: snap.status ?? prev.status,
-              elapsed,
-              stuck: Date.now() - startedAt.current > WATCH_MS,
-            }
-          : prev,
-      );
+
+      setState((prev) => {
+        // A poll that outlived its transaction must not overwrite a newer one.
+        if (prev.hash !== hash) return prev;
+        if (next) return { ...next, quote: prev.quote, nudges: prev.nudges, elapsed };
+        return {
+          ...prev,
+          status: snap.status ?? prev.status,
+          elapsed,
+          stuck: Date.now() - startedAt.current > WATCH_MS,
+        };
+      });
+
+      if (next && next.phase !== "error") refreshAll();
     }, POLL_MS);
 
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [state, apply, refreshAll]);
+    // Narrow on purpose — see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase, state.hash, state.stuck, apply, refreshAll]);
 
   /** Quote, preflight, sign, submit. Returns the state it settled into. */
   const run = useCallback(
@@ -322,18 +327,14 @@ export function useTx() {
     if (!hash) return;
     const snap = await pollTx(hash);
     const elapsed = Math.floor((Date.now() - startedAt.current) / 1000);
-    if (!snap.answered) {
-      setState((prev) => ({ ...prev, elapsed }));
-      return;
-    }
-    const next = apply(snap, hash);
-    if (next) {
-      setState({ ...next, quote: state.quote, nudges: state.nudges, elapsed });
-      if (next.phase !== "error") refreshAll();
-      return;
-    }
-    setState((prev) => ({ ...prev, status: snap.status ?? prev.status, elapsed }));
-  }, [state.hash, state.quote, state.nudges, apply, refreshAll]);
+    const next = snap.answered ? apply(snap, hash) : null;
+    setState((prev) => {
+      if (prev.hash !== hash) return prev;
+      if (next) return { ...next, quote: prev.quote, nudges: prev.nudges, elapsed };
+      return { ...prev, status: snap.status ?? prev.status, elapsed };
+    });
+    if (next && next.phase !== "error") refreshAll();
+  }, [state.hash, apply, refreshAll]);
 
   /**
    * Ask the network to move a transaction that has stopped moving.

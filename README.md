@@ -165,6 +165,33 @@ Every pattern a past review rejected this project for, re-checked from scratch �
 structurally against the source (with comments stripped, so the audit cannot pass
 on its own explanations) and live against the deployment.
 
+### The reported failure, reproduced
+
+```bash
+cd test
+node repro-fee-failure.mjs --network=bradbury
+```
+
+Submits the same write twice against the same network — once the way production
+did, once through the preflight — and prints the RPC errors on the wire in order,
+so the `LackOfFundForMaxFee` → `eth_sendRawTransaction` sequence is visible as
+one failure rather than two. Needs no funded account; that is the point.
+
+### The proof runs
+
+```bash
+cd test
+node proof-commitments.mjs                 # quote → hash → receipt → id → frontend state
+node proof-archive.mjs                     # a commitment judged on a pinned snapshot
+```
+
+`proof-commitments.mjs` creates three commitments and prints, for each, the fee
+quote the wallet was checked against, the transaction hash, the receipt as the
+chain reports it, the commitment id, and the state read back **through the
+deployed app's own relay**. `proof-archive.mjs` covers what the fixtures cannot:
+a commitment with an immutable snapshot pinned at creation, settled on
+`ARCHIVE` evidence rather than a live read.
+
 ### End-to-end against a live network
 
 ```bash
@@ -223,6 +250,10 @@ test/audit.mjs                 the standing rejection-pattern audit
 test/e2e.mjs                   lifecycle tests against a live network
 test/fees.mjs                  fee estimation and the preflight balance check
 test/pacer.mjs                 the global RPC rate limiter
+test/repro-fee-failure.mjs     the reported production failure, reproduced
+test/proof-commitments.mjs     quote → hash → receipt → id → frontend state
+test/proof-archive.mjs         a commitment settled on a pinned snapshot
 test/deploy.mjs                deploy + sanity read + env write
+docs/RESUBMISSION.md           the review, point by point, and what to run
 frontend/                      Next.js app
 ```
