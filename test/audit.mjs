@@ -261,14 +261,44 @@ section("SOURCE · All stored fields recomputed post-consensus");
   check("_settle re-validates the sketch as hex",
     Boolean(settle) && settle.text.includes('_hex_only(result.get("sketch"'));
   check("_settle RECOMPUTES drift from the creation sketch",
-    Boolean(settle) && settle.text.includes("_sketch_sim(made_sketch, sketch)"));
+    Boolean(settle) && /_sketch_sim\(\s*made_sketch,\s*sketch\s*\)/.test(settle.code));
+  // Matched on the ARGUMENTS THAT MATTER, not on an exact call spelling: this
+  // check failed once because the function gained a parameter, which is a
+  // change to the code it is checking and not a regression in it. An audit that
+  // cries wolf over its own brittleness stops being read.
   check("_settle re-checks the claimed snapshot url",
-    Boolean(settle) && settle.text.includes("_snapshot_ok(snap_url, url, due)"));
+    Boolean(settle) && /_snapshot_ok\(\s*snap_url,\s*url,\s*due/.test(settle.code));
+  check("_settle bounds the snapshot window by the period, not a constant",
+    Boolean(settle) && /_snapshot_ok\([^)]*period_seconds/.test(settle.code) &&
+      /^def _archive_window\(/m.test(src));
   check("_settle clamps confidence", Boolean(settle) && settle.text.includes("_clamp(_as_int"));
   check("_settle replaces prose written for a verdict that moved",
     Boolean(settle) && settle.text.includes("_downgrade_note("));
   check("_settle is pure — it takes no self",
     Boolean(settle) && /^def _settle\(/m.test(src));
+}
+
+section("SOURCE · Deadline-time evidence");
+
+{
+  check("the archive window is a function of the period", /^def _archive_window\(/m.test(src));
+  // The two rules that make a capture evidence about THIS deadline rather than
+  // about some other moment. Both were wrong once; both are load-bearing.
+  const window = bodyOf("_snapshot_ok");
+  check("a capture from before the deadline is refused",
+    Boolean(window) && /gap < 0/.test(window.code));
+  check("a capture further past it than one period is refused",
+    Boolean(window) && /gap > _archive_window\(period_seconds\)/.test(window.code));
+  const cap = bodyOf("_archive_window");
+  check("the per-period window is capped",
+    Boolean(cap) && cap.code.includes("ARCHIVE_WINDOW_SECONDS"));
+  const find = bodyOf("_find_snapshot");
+  check("the archive query is aimed past the deadline",
+    Boolean(find) && /due \+ window \/\/ 2/.test(find.code));
+  check("the snapshot the leader claims is re-checked before it is fetched",
+    bodyOf("_leader_rejectable")?.code.includes("_snapshot_ok(snap, url, due, period_seconds)"));
+  check("the raw archived bytes are requested, not the wrapper",
+    bodyOf("_wayback_raw")?.code.includes('"id_/"'));
 }
 
 section("SOURCE · Conservative resolution");
@@ -278,7 +308,7 @@ section("SOURCE · Conservative resolution");
   check("_agree exists and is module level", Boolean(agree) && /^def _agree\(/m.test(src));
   check("a validator with no evidence only accepts INCONCLUSIVE",
     Boolean(agree) &&
-      /if not mine\["reachable"\]:\s*\n\t*return theirs == VERDICT_INCONCLUSIVE/.test(agree.text));
+      /if not mine\["reachable"\]:\s*\n\t*return theirs == VERDICT_INCONCLUSIVE/.test(agree.code));
   check("a leader calling a live page dead is refused",
     Boolean(agree) && agree.text.includes('if not their_reach and mine["reachable"]'));
   check("archived evidence is compared byte-for-byte",

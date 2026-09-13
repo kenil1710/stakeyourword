@@ -18,6 +18,7 @@ says — in the same transaction, with no owner in the loop.
 | Runner | `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` (v0.3.0) |
 | Contract source | [`contracts/stake_your_word.py`](contracts/stake_your_word.py) |
 | Design notes | [`contracts/NOTES.md`](contracts/NOTES.md) |
+| Proof runs | [`docs/PROOF.md`](docs/PROOF.md) |
 
 Studio Devnet is the only one of the three networks running the **v0.3.0**
 executor line this contract targets. Studionet and Bradbury still resolve v0.2
@@ -260,5 +261,6 @@ test/proof-archive.mjs         a commitment settled on a pinned snapshot
 test/probe.mjs                 one round trip, and the optional-argument default
 test/deploy.mjs                deploy + sanity read + env write
 docs/RESUBMISSION.md           the review, point by point, and what to run
+docs/PROOF.md                  verbatim output from every run above
 frontend/                      Next.js app
 ```

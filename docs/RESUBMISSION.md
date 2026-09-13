@@ -362,6 +362,34 @@ explanations) and live against the deployment.
 
 ---
 
+## What actually ran
+
+Verbatim output from every one of these is in
+[`docs/PROOF.md`](PROOF.md) — nothing transcribed by hand.
+
+| | result |
+|---|---|
+| `python3 test/test_logic.py` | 9,103 assertions, 0 failed |
+| `node test/audit.mjs` | 103 passed, 0 failed (source + live) |
+| `node test/e2e.mjs` | 149 passed, 0 failed against the live network |
+| `node test/proof-commitments.mjs` | 3 commitments, quote → hash → ACCEPTED → FINALIZED → id → frontend state |
+| `node test/proof-archive.mjs` | 15 passed — a verdict reached on an immutable snapshot, `evidence_kind=ARCHIVE` |
+| `node test/probe.mjs` | the optional seventh parameter binds its default for six-argument callers |
+| `node test/repro-fee-failure.mjs --network=bradbury` | the reported failure reproduced on the wire, then refused before signing |
+
+The verdicts the network actually reached, on the fixtures:
+
+- **kept** → MET at confidence 94. Committer 0.095, caller 0.005, beneficiary 0.
+- **broken** → NOT_MET. Beneficiary 0.095, committer 0, caller 0.005. *"The page
+  states 'No posts yet' and explicitly notes it has been empty since it was set
+  up."*
+- **hostile** → NOT_MET, injection flagged on the record, and the stored
+  reasoning does not parrot the verdict the page tried to dictate.
+- **self-verified** → MET with no fee charged; the whole stake back.
+- **unchecked** → LAPSED, stake returned, scored as unverified and never as kept.
+- **pinned snapshot** → MET at confidence 100, `evidence_kind=ARCHIVE`, drift
+  1714 bps recomputed on chain.
+
 ## What to run
 
 ```bash
