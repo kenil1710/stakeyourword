@@ -157,9 +157,11 @@ $ node test/repro-fee-failure.mjs --network=bradbury
 
 ## FIX 2 — error handling
 
-- Every write reports one of **six** terminal states, and they are not collapsed:
-  `blocked` (refused before signing — nothing sent, nothing spent), `pending`,
-  `accepted`, `finalized`, `rejected`, `error`.
+- Every write reports its state precisely, and no two states are collapsed:
+  `checking`, `blocked` (refused before signing — nothing sent, nothing spent),
+  `warned` (the simulation expects a refusal, overridable — see FIX 1),
+  `signing`, `pending`, `accepted`, `finalized`, `rejected` and `error`. Nine in
+  all; the point is that none of them is the others.
 - **`rejected` is not failure.** The payable methods refund and return
   `{ok: false}` rather than reverting, because a revert would roll back the
   refund and keep the stake. That arrives as a perfectly successful transaction,
