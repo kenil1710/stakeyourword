@@ -1154,6 +1154,37 @@ def test_settle_never_pays_out_on_nothing():
         ok("drift is always in range", 0 <= out["drift"] <= syw.BPS_DENOM)
 
 
+def test_prompt_and_parser_agree():
+    """
+    The prompt asks for three observation keys and `_judge` reads three keys
+    back. Nothing but this checks that they are the SAME three.
+
+    Rename one in the prompt and not in the parser and every observation reads
+    false — silently, on every node, for every verification. The feature vector
+    would still be "compared", and would still always agree, and the consensus
+    condition it is supposed to add would be gone with no test failing.
+    """
+    opened = syw._epoch_from_iso("2026-08-21T00:00:00Z")
+    due = syw._epoch_from_iso("2026-08-28T00:00:00Z")
+    body = syw._judge_prompt("x" * 20, "https://e.com", 1, opened, due, "page", True,
+                             syw.EVIDENCE_LIVE, "", False, 5000)
+
+    import inspect
+    judge = inspect.getsource(syw._judge)
+
+    for asked, read in (("dated_in_window", "dated"), ("artifact_found", "artifact"),
+                        ("addresses_reader", "addressed")):
+        ok(f"the prompt asks for {asked}", f'"{asked}"' in body)
+        ok(f"_judge reads {asked} back", f'raw.get("{asked}"' in judge)
+        ok(f"_judge exposes it as {read}", f'"{read}":' in judge)
+        ok(f"_agree compares {read}", read in inspect.getsource(syw._facts_agree))
+
+    # And the verdict/confidence/reasoning keys, for the same reason.
+    for asked in ("verdict", "confidence", "reasoning"):
+        ok(f"the prompt asks for {asked}", f'"{asked}"' in body)
+        ok(f"_judge reads {asked} back", f'raw.get("{asked}"' in judge)
+
+
 # ── Invariants between constants ────────────────────────────────────────────
 
 def test_invariants():
@@ -1235,6 +1266,7 @@ for fn in (
     test_frequency,
     test_utils,
     test_prompt,
+    test_prompt_and_parser_agree,
     test_sketch,
     test_drift_bucket,
     test_hex_only,
