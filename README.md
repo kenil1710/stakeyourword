@@ -36,10 +36,13 @@ So the contract resolves evidence in this order:
 1. **A snapshot the committer pinned at creation.** Optional, and the strongest
    option: the bytes were fixed before anyone knew the verdict, the URL is on
    chain, and every validator fetches the identical thing.
-2. **A public archive capture from around the deadline.** The contract asks the
-   Wayback availability API for the closest capture to the deadline and accepts
-   it only if it lands within seven days, fetching the raw archived bytes rather
-   than the page the archive wraps them in.
+2. **A public archive capture from just after the deadline.** The contract asks
+   the Wayback availability API for the closest capture and accepts it only if
+   it lands **at or after** the deadline and no further past it than one period
+   — capped at seven days. A capture from before the deadline is refused however
+   close it is: it shows the page partway through the window, which is a
+   different question. The raw archived bytes are fetched, not the page the
+   archive wraps them in.
 3. **The live page**, recorded as such. `evidence_kind` is stored on the row and
    shown in the UI, so a verdict reached on today's page is visible as exactly
    that.

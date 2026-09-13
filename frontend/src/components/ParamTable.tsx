@@ -36,7 +36,9 @@ export function ParamTable() {
     ["Period length", `${duration(data.min_period_minutes * 60)} – 30d`],
     ["Periods funded at once", `up to ${data.max_funded_periods}`],
     ["Open promises per wallet", `up to ${data.max_active_per_wallet}`],
-    ["Deadline-snapshot window", `±${duration(data.archive_window_seconds)}`],
+    // The window is one period past the deadline, capped at this. A snapshot
+    // from before the deadline never counts: it cannot show work done up to it.
+    ["Snapshot window after a deadline", `one period, up to ${duration(data.archive_window_cap_seconds)}`],
     ["In-flight verification lock", duration(data.verify_lock_seconds)],
     ["Currently staked", gen(data.locked_stakes)],
     ["Owner", shortAddress(data.owner)],

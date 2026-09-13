@@ -145,8 +145,12 @@ export interface Stats {
   max_funded_periods: number;
   max_active_per_wallet: number;
   min_period_minutes: number;
-  /** How near a deadline an archived snapshot has to be to count as evidence. */
-  archive_window_seconds: number;
+  /**
+   * The HARD CAP on how long after a deadline an archived snapshot may be
+   * captured and still count as evidence about it. The window a given
+   * commitment actually gets is its own period length, capped at this.
+   */
+  archive_window_cap_seconds: number;
   /** How long a verification holds the in-flight lock. */
   verify_lock_seconds: number;
   paused: boolean;

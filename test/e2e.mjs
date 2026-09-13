@@ -925,8 +925,8 @@ test("TEST 18 · The contract exposes the lifecycle a user needs to drive a writ
     const stats = await owner.viewJson("get_stats");
     check("the lock window is published so the UI can count down",
       stats.verify_lock_seconds > 0, `${stats.verify_lock_seconds}s`);
-    check("the archive window is published", stats.archive_window_seconds > 0,
-      `${stats.archive_window_seconds}s`);
+    check("the archive window cap is published", stats.archive_window_cap_seconds > 0,
+      `${stats.archive_window_cap_seconds}s`);
   }
 }
 

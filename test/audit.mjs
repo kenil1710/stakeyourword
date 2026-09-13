@@ -382,8 +382,8 @@ if (stats.__error) {
     stats.bounty_bps <= 1000 && stats.cancel_fee_bps <= 2000,
     `bounty ${stats.bounty_bps}bps, cancel ${stats.cancel_fee_bps}bps`);
   check("the new parameters are published",
-    stats.archive_window_seconds > 0 && stats.verify_lock_seconds > 0,
-    `archive ±${stats.archive_window_seconds}s, lock ${stats.verify_lock_seconds}s`);
+    stats.archive_window_cap_seconds > 0 && stats.verify_lock_seconds > 0,
+    `archive cap ${stats.archive_window_cap_seconds}s, lock ${stats.verify_lock_seconds}s`);
 
   // locked_stakes must equal the sum of every ACTIVE commitment's stake.
   const active = await client.viewJson("get_active_commitments").catch(() => []);

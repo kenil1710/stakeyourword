@@ -252,11 +252,15 @@ simply fetched the URL at settlement time.
 1. **A snapshot the committer pinned at creation.** The bytes were fixed before
    anyone knew the verdict and the URL is on chain, so every validator fetches
    the identical thing.
-2. **A public archive capture from around the deadline.** `_find_snapshot` asks
-   the Wayback availability API for the closest capture to the deadline stamp,
-   accepts it only within `ARCHIVE_WINDOW_SECONDS` (7 days), and fetches it with
-   the `id_` modifier — the raw archived bytes, not the page the archive wraps
-   them in, which carries a live banner and would differ between fetches.
+2. **A public archive capture from just after the deadline.** Accepted only if
+   it lands **at or after** the deadline and no further past it than one period,
+   capped at seven days. The window is the period rather than a constant because
+   a fixed seven days would let a capture six days stale stand as evidence about
+   a five-minute period — I had that bug and the offline tests now pin it. A
+   capture from before the deadline is refused however close: it shows the page
+   partway through the window, a different question. Fetched with the `id_`
+   modifier — the raw archived bytes, not the page the archive wraps them in,
+   which carries a live banner and would differ between fetches.
 3. **The live page**, recorded as such. `evidence_kind` is stored on the row and
    shown in the UI, so a verdict reached on today's page about a past window is
    visible as exactly that.

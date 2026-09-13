@@ -74,7 +74,8 @@ DAY_MINUTES = 1440
 WEEK_MINUTES = 10080
 MONTH_MINUTES = 43200
 
-# A snapshot counts as deadline-time evidence only this close to the deadline.
+# The furthest past a deadline a snapshot may be captured and still count as
+# evidence about it. A HARD CAP on top of the per-period window below.
 ARCHIVE_WINDOW_SECONDS = 7 * 86400
 WAYBACK_RAW = "https://web.archive.org/web/"
 WAYBACK_API = "https://archive.org/wayback/available?url="
@@ -462,6 +463,18 @@ def _epoch_from_stamp(value) -> int:
 			+ int(s[8:10]) * 3600 + int(s[10:12]) * 60 + int(s[12:14]))
 
 
+def _archive_window(period_seconds) -> int:
+	# One period past the deadline, capped. A FIXED window is wrong at both ends
+	# of the range this contract allows: seven days would let a capture six days
+	# stale stand as evidence about a five-minute period, and one period is
+	# already generous for a monthly one. The grace window is the same length,
+	# which is the honest bound — past it the period is not judged at all.
+	span = _as_int(period_seconds, 0)
+	if span <= 0:
+		return 0
+	return span if span < ARCHIVE_WINDOW_SECONDS else ARCHIVE_WINDOW_SECONDS
+
+
 def _wayback_raw(stamp: str, url: str) -> str:
 	# `id_` asks for the archived bytes themselves rather than the page the
 	# archive wraps them in — the wrapper carries a live banner and would differ
@@ -469,7 +482,7 @@ def _wayback_raw(stamp: str, url: str) -> str:
 	return WAYBACK_RAW + stamp + "id_/" + url
 
 
-def _snapshot_ok(snap_url, target_url: str, due: int) -> str:
+def _snapshot_ok(snap_url, target_url: str, due: int, period_seconds) -> str:
 	# A PURE check of the snapshot url a leader claims to have read, so every
 	# validator reaches the same conclusion about whether it is worth fetching
 	# without querying the archive itself. Returns the stamp, or "".
@@ -484,10 +497,13 @@ def _snapshot_ok(snap_url, target_url: str, due: int) -> str:
 	when = _epoch_from_stamp(stamp)
 	if when <= 0:
 		return ""
+	# AT OR AFTER the deadline, and no further past it than one period. A
+	# capture from BEFORE the deadline cannot show work done up to it — it is
+	# evidence about the state of the page partway through the window, which is
+	# a different question — and one from a period later is contaminated by the
+	# next period's work.
 	gap = when - int(due)
-	if gap < 0:
-		gap = -gap
-	if gap > ARCHIVE_WINDOW_SECONDS:
+	if gap < 0 or gap > _archive_window(period_seconds):
 		return ""
 	if _domain(rest[18:]) != _domain(target_url):
 		return ""
@@ -526,7 +542,7 @@ def _downgrade_note(verdict: str, kind: str, stale: bool) -> str:
 			+ verdict + "." + tail)
 
 
-def _leader_rejectable(data, url: str, archive_url: str, due: int) -> bool:
+def _leader_rejectable(data, url: str, archive_url: str, due: int, period_seconds) -> bool:
 	# The gates that are PURE functions of the leader's own calldata, checked
 	# before the validator spends a fetch of its own. Every validator computes
 	# the identical answer, so they can reject a bad leader without ever being a
@@ -552,7 +568,7 @@ def _leader_rejectable(data, url: str, archive_url: str, due: int) -> bool:
 		snap = str(data.get("snap_url", ""))
 		if archive_url:
 			return snap != archive_url
-		return not _snapshot_ok(snap, url, due)
+		return not _snapshot_ok(snap, url, due, period_seconds)
 	return False
 
 
@@ -596,8 +612,8 @@ def _agree(data, mine) -> bool:
 	return mine["verdict"] == theirs
 
 
-def _settle(result, url: str, archive_url: str, due: int, made_hash: str,
-		made_sketch: str) -> dict:
+def _settle(result, url: str, archive_url: str, due: int, period_seconds: int,
+		made_hash: str, made_sketch: str) -> dict:
 	# POST-CONSENSUS RECOMPUTATION. Nothing here is copied out of the agreed
 	# payload as-is: every field that reaches storage is re-normalised,
 	# re-validated against what the contract already holds, or recomputed from
@@ -620,7 +636,7 @@ def _settle(result, url: str, archive_url: str, due: int, made_hash: str,
 			if snap_url != archive_url:
 				kind = EVIDENCE_NONE
 		else:
-			stamp = _snapshot_ok(snap_url, url, due)
+			stamp = _snapshot_ok(snap_url, url, due, period_seconds)
 			if not stamp:
 				kind = EVIDENCE_NONE
 	if kind == EVIDENCE_NONE or not fresh or not bool(result.get("reachable", False)):
@@ -676,11 +692,20 @@ def _fetch(url: str) -> dict:
 			"preview": _defang(text)[:MAX_PREVIEW_CHARS]}
 
 
-def _find_snapshot(url: str, due: int) -> str:
+def _find_snapshot(url: str, due: int, period_seconds: int) -> str:
 	# What the page said AT THE DEADLINE, not what it says now. Returns "" when
 	# the archive holds nothing close enough to the deadline to count.
+	#
+	# The query is aimed HALF A WINDOW PAST the deadline rather than at it. The
+	# availability API returns the capture closest to the timestamp asked for,
+	# and aiming at the deadline itself makes it a coin toss whether that lands
+	# just before — which `_snapshot_ok` then rejects, losing an archive that was
+	# there. Aiming past it biases toward the captures that actually qualify.
+	# Deterministic either way: both numbers come from storage.
+	window = _archive_window(period_seconds)
 	try:
-		res = gl.nondet.web.get(WAYBACK_API + url + "&timestamp=" + _stamp_from_epoch(due))
+		res = gl.nondet.web.get(
+			WAYBACK_API + url + "&timestamp=" + _stamp_from_epoch(due + window // 2))
 		if int(res.status) != 200:
 			return ""
 		data = json.loads(res.body.decode("utf-8", errors="replace"))
@@ -695,14 +720,14 @@ def _find_snapshot(url: str, due: int) -> str:
 	if not isinstance(closest, dict) or not closest.get("available", False):
 		return ""
 	candidate = _wayback_raw(str(closest.get("timestamp", "")), url)
-	return candidate if _snapshot_ok(candidate, url, due) else ""
+	return candidate if _snapshot_ok(candidate, url, due, period_seconds) else ""
 
 
-def _evidence(url: str, archive_url: str, due: int) -> dict:
+def _evidence(url: str, archive_url: str, due: int, period_seconds: int) -> dict:
 	# Deadline-time evidence first. An immutable snapshot is the ONLY artefact
 	# two validators can hash and compare exactly, which is what makes a
 	# decisive verdict corroborable rather than merely agreed-with.
-	snap_url = str(archive_url) if archive_url else _find_snapshot(url, due)
+	snap_url = str(archive_url) if archive_url else _find_snapshot(url, due, period_seconds)
 	if snap_url:
 		text = _render_text(snap_url)
 		if text:
@@ -777,12 +802,14 @@ def _judge_prompt(description: str, url: str, period_no: int, opened: int, due: 
 
 
 def _judge(description: str, url: str, archive_url: str, period_no: int, opened: int,
-		due: int, prev_hash: str, created_hash: str, created_sketch: str) -> dict:
-	ev = _evidence(url, archive_url, due)
+		due: int, period_seconds: int, prev_hash: str, created_hash: str,
+		created_sketch: str) -> dict:
+	ev = _evidence(url, archive_url, due, period_seconds)
 	text = ev["text"]
 	reachable = ev["kind"] != EVIDENCE_NONE
 	fresh = ev["hash"]
-	stamp = _snapshot_ok(ev["snap_url"], url, due) if ev["kind"] == EVIDENCE_ARCHIVE else ""
+	stamp = (_snapshot_ok(ev["snap_url"], url, due, period_seconds)
+			if ev["kind"] == EVIDENCE_ARCHIVE else "")
 	drift = _sketch_sim(created_sketch, ev["sketch"])
 	unchanged = bool(prev_hash and fresh and prev_hash == fresh)
 	body = _defang(text)[:MAX_PAGE_CHARS] if text else "(no evidence for this deadline)"
@@ -1294,8 +1321,8 @@ class StakeYourWord(gl.contract.Contract):
 		made_sketch = str(record.created_sketch)
 
 		def leader_fn() -> dict:
-			return _judge(desc_s, url_s, archive_s, period_no, opened, due, prev_hash,
-					made_hash, made_sketch)
+			return _judge(desc_s, url_s, archive_s, period_no, opened, due, period_seconds,
+					prev_hash, made_hash, made_sketch)
 
 		def validator_fn(leader_result) -> bool:
 			# A leader error must be RE-RUN, never answered False — that turns a
@@ -1307,14 +1334,14 @@ class StakeYourWord(gl.contract.Contract):
 			data = leader_result.calldata
 			# Everything decidable from the leader's own calldata is decided before
 			# a fetch is spent on it.
-			if _leader_rejectable(data, url_s, archive_s, due):
+			if _leader_rejectable(data, url_s, archive_s, due, period_seconds):
 				return False
-			mine = _judge(desc_s, url_s, archive_s, period_no, opened, due, prev_hash,
-					made_hash, made_sketch)
+			mine = _judge(desc_s, url_s, archive_s, period_no, opened, due, period_seconds,
+					prev_hash, made_hash, made_sketch)
 			return _agree(data, mine)
 
 		result = gl.vm.run_nondet(leader_fn, validator_fn)
-		settled = _settle(result, url_s, archive_s, due, made_hash, made_sketch)
+		settled = _settle(result, url_s, archive_s, due, period_seconds, made_hash, made_sketch)
 		verdict = str(settled["verdict"])
 
 		caller = gl.message.sender_address
@@ -1797,7 +1824,7 @@ class StakeYourWord(gl.contract.Contract):
 			"max_funded_periods": MAX_FUNDED_PERIODS,
 			"max_active_per_wallet": MAX_ACTIVE_PER_WALLET,
 			"min_period_minutes": MIN_PERIOD_MINUTES,
-			"archive_window_seconds": ARCHIVE_WINDOW_SECONDS,
+			"archive_window_cap_seconds": ARCHIVE_WINDOW_SECONDS,
 			"verify_lock_seconds": VERIFY_LOCK_SECONDS,
 			"paused": bool(self.paused), "owner": str(self.owner), "now": self._now(),
 		})

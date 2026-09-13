@@ -327,11 +327,26 @@ not evidence about Tuesday, and an earlier version simply did that.
 1. **A snapshot the committer pinned at creation** (`archive_url`). The bytes
    were fixed before anyone knew the verdict, and the URL is on chain, so every
    validator fetches the identical thing. This is the `ATTESTED` source class.
-2. **A public archive capture from around the deadline.** `_find_snapshot` asks
-   the Wayback availability API for the closest capture to the deadline stamp,
-   accepts it only if it lands within `ARCHIVE_WINDOW_SECONDS`, and fetches it
-   with the `id_` modifier — the raw archived bytes, not the page the archive
-   wraps them in, which carries a live banner and would differ between fetches.
+2. **A public archive capture from just after the deadline.** `_find_snapshot`
+   asks the Wayback availability API for the closest capture, and `_snapshot_ok`
+   accepts it only if it lands **at or after** the deadline and no further past
+   it than one period (`_archive_window`, capped at `ARCHIVE_WINDOW_SECONDS`).
+   It is fetched with the `id_` modifier — the raw archived bytes, not the page
+   the archive wraps them in, which carries a live banner and would differ
+   between fetches.
+
+   **The window is the period, not a constant.** A fixed seven days is wrong at
+   both ends of the range this contract allows: it would let a capture six days
+   stale stand as evidence about a five-minute period, and it is already
+   generous for a monthly one. And a capture from BEFORE the deadline is refused
+   however close it is — it shows the page partway through the window, which is
+   a different question from whether the promise was kept by the end of it.
+
+   The API query is aimed half a window PAST the deadline rather than at it.
+   The availability API returns the capture closest to the timestamp asked for,
+   and aiming at the deadline makes it a coin toss whether that lands just
+   before — which `_snapshot_ok` would then refuse, losing an archive that was
+   there. Both numbers come from storage, so it stays deterministic.
 3. **The live page**, recorded as such. `evidence_kind` is stored on the row and
    shown in the UI, so a verdict reached on today's page about a past window is
    visible as exactly that rather than quietly presented as deadline evidence.
