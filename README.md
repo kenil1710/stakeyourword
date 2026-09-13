@@ -19,6 +19,7 @@ says — in the same transaction, with no owner in the loop.
 | Contract source | [`contracts/stake_your_word.py`](contracts/stake_your_word.py) |
 | Design notes | [`contracts/NOTES.md`](contracts/NOTES.md) |
 | Proof runs | [`docs/PROOF.md`](docs/PROOF.md) |
+| Bradbury proof | tx [`0xf504a684…`](https://explorer-bradbury.genlayer.com/tx/0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be), commitment #0 |
 
 Studio Devnet is the only one of the three networks running the **v0.3.0**
 executor line this contract targets. Studionet and Bradbury still resolve v0.2

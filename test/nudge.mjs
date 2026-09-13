@@ -25,8 +25,17 @@
  * Bradbury runs the v0.2 executor line and genlayer-js 2.x encodes calldata for
  * v0.3. See the header of `repro-fee-failure.mjs`.
  *
+ * ## Two different targets
+ *
+ * `--until=terminal` (the default) stops at ACCEPTED: the round has closed, the
+ * state is applied and the money has moved. `--until=finalized` keeps going to
+ * FINALIZED, which is when it stops being reversible. They are different
+ * questions and collapsing them is how a UI tells someone their payout has
+ * landed while it is still in flight.
+ *
  * Usage:
  *   node nudge.mjs --tx=0x… [--network=bradbury] [--role=empty] [--minutes=30]
+ *   node nudge.mjs --tx=0x… --until=finalized
  */
 import { createClient, createAccount } from "genlayer-js-v1";
 import { testnetBradbury, studionet } from "genlayer-js-v1/chains";
@@ -44,6 +53,10 @@ if (!hash) throw new Error("pass --tx=0x… — the transaction to drive");
 
 const role = argOf("role", "empty");
 const minutes = Number(argOf("minutes", "30"));
+const until = argOf("until", "terminal");
+if (until !== "terminal" && until !== "finalized") {
+  throw new Error(`--until must be terminal or finalized, got: ${until}`);
+}
 const accounts = JSON.parse(readFileSync(new URL("./.accounts.json", import.meta.url), "utf8"));
 
 const read = createClient({ chain });
@@ -53,11 +66,14 @@ const wallet = createClient({ chain, account: createAccount(accounts[role].key) 
  *  rotates past those and carries on, so stopping there abandons a transaction
  *  that is still alive. */
 const TERMINAL = ["ACCEPTED", "FINALIZED", "UNDETERMINED", "CANCELED"];
+/** Waiting for finalization means ACCEPTED is no longer a stopping point. */
+const DONE = until === "finalized" ? ["FINALIZED", "UNDETERMINED", "CANCELED"] : TERMINAL;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 console.log(`\nnetwork  ${chain.name}`);
 console.log(`tx       ${hash}`);
-console.log(`nudging as ${role} (${wallet.account.address})\n`);
+console.log(`nudging as ${role} (${wallet.account.address})`);
+console.log(`waiting for ${until === "finalized" ? "FINALIZED" : "a terminal state"}\n`);
 
 const started = Date.now();
 const deadline = started + minutes * 60_000;
@@ -75,10 +91,11 @@ for (;;) {
     last = status;
   }
 
-  if (status && TERMINAL.includes(status)) {
+  if (status && DONE.includes(status)) {
     console.log(`\n  settled as ${status} after ${secs}s and ${nudges} nudge(s)`);
     if (status === "ACCEPTED") {
-      console.log(`  state is applied; finalization follows on its own.`);
+      console.log(`  state is applied and the money has moved; it is not irreversible yet.`);
+      console.log(`  Run again with --until=finalized to wait that out.`);
     }
     break;
   }

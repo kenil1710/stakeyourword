@@ -9,38 +9,95 @@ Every point in the review, what was actually wrong, and what to run to check it.
 | Runner | `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` (v0.3.0) |
 | App | https://stakeyourword.vercel.app |
 | Source | https://github.com/kenil1710/stakeyourword |
+| Bradbury proof | tx `0xf504a684…`, commitment #0 on `0xEFC9312D79E5f9e18c2C602Ae6A23E1E0b710cD2` |
 
 ---
 
-## First, the one thing I could not do
+## First: the funded Bradbury reproduction
 
-The review asks for a **funded Bradbury reproduction** of a successful
-`create_commitment` — hash, wallet-confirmation screen, receipt, commitment id,
-refreshed frontend.
+The review asked for a funded Bradbury wallet creating a commitment, with the
+hash, the receipt, the id and the finalization state. Here it is.
 
-I could not produce that, and the reason is the substance of the bug rather than
-an excuse for skipping it. **Bradbury has no programmatic faucet.** The only way
-to fund an address there is the Cloudflare-gated web faucet at
-`testnet-faucet.genlayer.foundation`, which needs a human and a browser. Every
-Bradbury account this project holds is at exactly 0 GEN, which is precisely why
-the write failed in the first place.
+`0x28Be0f914219422fA0F46F201f47D8356B3eCeC0` was funded with 3 GEN from the
+faucet — Bradbury has no faucet call, only a Cloudflare-gated web form, which is
+why every account in this project sat at 0 GEN and why the write failed at all.
 
-What I did instead, and what I think is the stronger answer:
+```
+node test/repro-fee-failure.mjs --network=bradbury
+```
 
-1. **Reproduced the exact failure on Bradbury, deterministically**, with the
-   full RPC sequence on the wire — see below. Not a description of the bug; the
-   bug.
-2. **Fixed it** so the same call is now refused locally with the amount named,
-   before a wallet dialog can open.
-3. **Ran the complete successful lifecycle on Studio Devnet**, which is where
-   this contract has to live anyway (below), with real transaction hashes,
-   accepted/finalized receipts, commitment ids and a live frontend reading them.
+**1 · The failure, on a wallet that cannot pay** (`outsider`, 0 GEN):
 
-To complete the Bradbury half: claim 100 GEN at the faucet for
-`0x28Be0f914219422fA0F46F201f47D8356B3eCeC0` and run
-`node test/repro-fee-failure.mjs --network=bradbury`. The "BEFORE" section will
-stop reproducing and the "AFTER" section will report `affordable: true`. That is
-one manual step and I have left it as the only one.
+```
+  RPC errors on the wire, in order:
+    eth_estimateGas          invalid transaction: LackOfFundForMaxFee { fee: 100000000000000000, balance: 0 }
+    eth_sendRawTransaction   sender does not have enough funds (0) to cover transaction fees: 100037500000000000
+
+  PASS  LackOfFundForMaxFee on the gas estimate
+  PASS  a follow-on eth_sendRawTransaction failure
+  PASS  surfacing as an RPC parameter/format error
+  PASS  the preflight refuses the same call before signing
+  PASS  and names what is missing
+```
+
+Both reported symptoms, in the order they hit the wire, on the network they were
+reported on — and then the preflight refusing the same call before anything is
+signed.
+
+**2 · The same call, on the funded wallet:**
+
+| | |
+|---|---|
+| Transaction | `0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be` |
+| Contract | `0xEFC9312D79E5f9e18c2C602Ae6A23E1E0b710cD2` (Bradbury, v0.2 runner) |
+| Execution | `FINISHED_WITH_RETURN` |
+| Commitment | **#0** — ACTIVE, 0.1 GEN staked, content hash `4c2003369458be3f` |
+| Committer | `0x28Be0f914219422fA0F46F201f47D8356B3eCeC0` |
+| Wallet | 3 GEN → 2.896934 GEN (0.1 stake + 0.003 in fees and nudges) |
+
+**3 · And the part I did not stage: it got stuck, and the nudge flow recovered
+it.**
+
+The transaction went `COMMITTING` → appeal round 3 (12 votes committed, 0
+revealed, `resultName: IDLE`) → back to `COMMITTING`, and sat there through 12
+nudges and 905 seconds. All the while `txExecutionResultName` read
+`FINISHED_WITH_RETURN`: **the contract had already run successfully.** The round
+simply had not closed, so no state was applied and there was no commitment to
+read.
+
+That is precisely the failure the review asked for a user-controlled recovery
+flow to handle, and it turned up on its own rather than being contrived.
+`test/nudge.mjs` — the command-line form of the **Check status** and **Nudge it
+along** controls the app now exposes — drove it out:
+
+```
+$ node test/nudge.mjs --tx=0xf504a684… --network=bradbury
+
+      1s  COMMITTING  (NOT_VOTED)
+    396s  ACCEPTED  (FINISHED_WITH_RETURN)
+
+  settled as ACCEPTED after 396s and 14 nudge(s)
+```
+
+State applied, commitment #0 on chain.
+
+Two things this cost me, both now fixed and both worth naming:
+
+- The repro script read the commitment straight after submission, found nothing,
+  and crashed — then reported three FAILs for a transaction whose execution had
+  already returned successfully. That is the exact confusion the script exists
+  to clear up, reproduced inside the script itself. It now distinguishes "the
+  round has not closed" from "the write failed".
+- **genlayer-js 2.x cannot talk to Bradbury at all.** It encodes calldata for the
+  v0.3 executor; a `get_stats` read that works under 1.1.8 comes back as
+  `ValueError: call to private method __handle_undefined_method__`, which reads
+  like a missing method on a contract that plainly has it and would send anyone
+  debugging it at the contract rather than the client. The SDK major must match
+  the executor line, so the Bradbury scripts pin 1.1.8 through an npm alias.
+
+The one piece still missing is the **wallet-confirmation screen**: these are
+local signing keys, so nothing prompts. The preflight that gates that screen is
+shown instead, with the exact numbers it checks.
 
 ## Second, why the deployment moved to Studio Devnet
 
@@ -375,7 +432,8 @@ Verbatim output from every one of these is in
 | `node test/proof-commitments.mjs` | 3 commitments, quote → hash → ACCEPTED → FINALIZED → id → frontend state |
 | `node test/proof-archive.mjs` | 15 passed — a verdict reached on an immutable snapshot, `evidence_kind=ARCHIVE` |
 | `node test/probe.mjs` | the optional seventh parameter binds its default for six-argument callers |
-| `node test/repro-fee-failure.mjs --network=bradbury` | the reported failure reproduced on the wire, then refused before signing |
+| `node test/repro-fee-failure.mjs --network=bradbury` | the failure reproduced on the wire, refused before signing, then a funded wallet through to commitment #0 |
+| `node test/nudge.mjs --tx=0xf504a684…` | a genuinely stuck Bradbury transaction driven COMMITTING → ACCEPTED in 396s and 14 nudges |
 
 The verdicts the network actually reached, on the fixtures:
 

@@ -4,44 +4,98 @@ Captured 2026-09-13T16:30:37Z against `0xF2Ab9544dba7Fb6181550b4531f58967921C405
 on GenLayer Studio Devnet (chain 61997), with the frontend live at
 https://stakeyourword.vercel.app.
 
-Every block below is verbatim output from a script in `test/`. Nothing here
-is transcribed by hand.
+Every block below is verbatim output from a script in `test/`, apart from
+whitespace reflow in two long reasoning strings. Nothing here is invented.
+
+The Bradbury blocks run against the **v0.2** deployment at
+`0xEFC9312D79E5f9e18c2C602Ae6A23E1E0b710cD2` — the one that was live when the
+review was written. The current contract source targets the v0.3 executor line,
+which Bradbury does not run; that is why the rest of this project lives on Studio
+Devnet.
 
 ## `node test/repro-fee-failure.mjs --network=bradbury`
 
-The production failure the review reported, reproduced on the network it was
-reported on, then refused by the preflight.
+The production failure reproduced on the network it was reported on, refused by
+the preflight, and then carried through to a real commitment on a funded wallet.
 
 ```
-network  Genlayer Bradbury Testnet (id 4221)
-wallet   0x28Be0f914219422fA0F46F201f47D8356B3eCeC0
-balance  0 GEN
-calling  create_commitment with 0.1 GEN of stake
-────────────────────────────────────────────────────────────────────
-BEFORE — submit without quoting the fee (what production did)
-────────────────────────────────────────────────────────────────────
-  RPC errors seen on the wire, in order:
+network   Genlayer Bradbury Testnet (id 4221)
+contract  0xEFC9312D79E5f9e18c2C602Ae6A23E1E0b710cD2
+
+════════════════════════════════════════════════════════════════════════
+1 · BEFORE — submit without checking, on an empty wallet
+════════════════════════════════════════════════════════════════════════
+  outsider  0xB7068253fEF7e6C40CC13681Aa0D2d29270386bF  0 GEN
+
+  RPC errors on the wire, in order:
     eth_estimateGas          invalid transaction: LackOfFundForMaxFee { fee: 100000000000000000, balance: 0 }
-    eth_sendRawTransaction   [0xffdc8b275daf92b3e04fcad4be69c1a16a75715c7f7ac7107b9ae57cffcc4454]: sender does not have enough funds (0) to
-  1. LackOfFundForMaxFee on the gas estimate      YES
-  2. a follow-on eth_sendRawTransaction failure   YES
-  3. surfacing as an RPC parameter/format error   YES
-  That is the reported failure, end to end: the consensus contract
-  locks fee + stake before the contract runs and this wallet holds
-  neither, the SDK swallows the estimate error and falls back to a
-  default gas limit, and the resubmission fails again — this time as a
-  transport-shaped error that hides the cause.
-────────────────────────────────────────────────────────────────────
-AFTER — quote the fee and check the balance before signing
-────────────────────────────────────────────────────────────────────
-  fee estimate     0 GEN
-  stake            0.1 GEN
-  required total   0.1 GEN
-  wallet holds     0 GEN
-  shortfall        0.1 GEN
-  affordable       false
-  REFUSED LOCALLY. Nothing signed, nothing spent.
-  "You need more than 0.1 GEN to create this commitment — the stake itself, plus a network fee this network would not quote. This wallet holds 0 GEN."
+    eth_sendRawTransaction   sender does not have enough funds (0) to cover transaction fees: 100037500000000000
+
+  PASS  LackOfFundForMaxFee on the gas estimate
+  PASS  a follow-on eth_sendRawTransaction failure
+  PASS  surfacing as an RPC parameter/format error
+  PASS  the preflight refuses the same call before signing
+  PASS  and names what is missing
+
+  "You need more than 0.1 GEN to create this commitment — the stake itself,
+   plus a network fee this network would not quote. This wallet holds 0 GEN."
+
+════════════════════════════════════════════════════════════════════════
+2 · AFTER — preflight, then submit, on a funded wallet
+════════════════════════════════════════════════════════════════════════
+  empty  0x28Be0f914219422fA0F46F201f47D8356B3eCeC0  3 GEN
+
+  PREFLIGHT
+    stake            0.1 GEN
+    wallet holds     3 GEN
+    affordable       true
+  PASS  the funded wallet passes the preflight
+
+  SUBMITTING create_commitment with 0.1 GEN…
+    tx hash          0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be
+  PASS  a transaction hash came back immediately
+```
+
+The transaction then parked. `COMMITTING` → appeal round 3 (12 votes committed,
+0 revealed, `resultName: IDLE`) → back to `COMMITTING`, through 12 nudges and
+905 seconds — all while `txExecutionResultName` read `FINISHED_WITH_RETURN`. The
+contract had run. The round had not closed, so no state was applied and there
+was no commitment to read yet.
+
+## `node test/nudge.mjs --tx=0xf504a684… --network=bradbury`
+
+The stuck transaction, driven out by the nudge flow — the command-line form of
+the **Check status** and **Nudge it along** controls in the app.
+
+```
+network  Genlayer Bradbury Testnet
+tx       0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be
+nudging as empty (0x28Be0f914219422fA0F46F201f47D8356B3eCeC0)
+
+      1s  COMMITTING  (NOT_VOTED)
+    396s  ACCEPTED  (FINISHED_WITH_RETURN)
+
+  settled as ACCEPTED after 396s and 14 nudge(s)
+  state is applied and the money has moved; it is not irreversible yet.
+```
+
+And the commitment it created, read back off Bradbury:
+
+```
+contract total commitments: 1 | locked 0.1000 GEN
+COMMITMENT #0
+  status        ACTIVE
+  committer     0x28Be0f914219422fA0F46F201f47D8356B3eCeC0
+  beneficiary   0x1ec3D2A3cb0C71906de4D4BfDE804273EF0ea261
+  description   "I will publish a new post on The Ship Log every week without fail"
+  proof url     https://stakeyourword.vercel.app/fixtures/kept
+  staked        0.1000 GEN over 1 period(s)
+  created hash  4c2003369458be3f
+  created at    2026-09-13T16:56:50.000Z
+  next deadline 2026-09-13T17:01:50.000Z
+
+TX status: ACCEPTED | exec: FINISHED_WITH_RETURN
+wallet balance: 2.896934 GEN   (3 GEN − 0.1 stake − 0.003 fees and nudges)
 ```
 
 ## `node test/e2e.mjs --base=https://stakeyourword.vercel.app`
