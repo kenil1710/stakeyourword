@@ -4,7 +4,7 @@ Every point in the review, what was actually wrong, and what to run to check it.
 
 | | |
 |---|---|
-| Contract | `0xA6CEc813955e78F7B71969FB909646530D61006A` |
+| Contract | `0xF2Ab9544dba7Fb6181550b4531f58967921C405c` |
 | Network | GenLayer **Studio Devnet** — chain `61997`, `https://studio-dev.genlayer.com/api` |
 | Runner | `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` (v0.3.0) |
 | App | https://stakeyourword.vercel.app |
