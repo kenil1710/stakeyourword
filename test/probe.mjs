@@ -2,14 +2,22 @@
  * A single create → verify round trip, to prove the two nondet paths work at
  * all before the rest of the suite is written against them.
  *
- * Usage: node probe.mjs [--network=studionet] [--url=https://example.com]
+ * It also does one thing the rest of the suite does not: it calls
+ * `create_commitment` with SIX positional arguments, leaving the optional
+ * seventh (`archive_url`) to its default. Anything already integrated against
+ * this contract was written before that parameter existed, and a default that
+ * does not actually bind over calldata would break every one of them silently —
+ * the call would revert, or worse, bind the wrong slot. Nothing else here would
+ * notice, because everything else passes all seven.
+ *
+ * Usage: node probe.mjs [--network=studiodev] [--url=https://example.com]
  */
 import { readFileSync } from "node:fs";
 import { connect, argOf, sleep, returnedJson } from "./harness.mjs";
 
 const deployed = JSON.parse(readFileSync(new URL("./.deployed.json", import.meta.url), "utf8"));
 const address = argOf("address", deployed.address);
-const networkName = argOf("network", deployed.network ?? "studionet");
+const networkName = argOf("network", deployed.network ?? "studiodev");
 const url = argOf("url", "https://example.com");
 const GEN = 10n ** 18n;
 const gen = (wei) => `${(Number(wei) / 1e18).toFixed(6)} GEN`;
@@ -45,6 +53,7 @@ const created = await committer.send(
     PERIOD_MIN,
     STAKE.toString(),
     false,
+    // archive_url deliberately OMITTED — see the header.
   ],
   STAKE,
 );
@@ -56,6 +65,13 @@ if (!created.ok) {
 }
 const body = returnedJson(created.returned);
 console.log(`  returned: ${JSON.stringify(body)}`);
+if (body?.ok) {
+  const kind = body.source_kind;
+  console.log(
+    `  the omitted archive_url bound its default: source_kind=${kind}` +
+      (kind === "OPEN" ? " ✓" : "  ← EXPECTED OPEN"),
+  );
+}
 if (!body?.ok) {
   console.log(`  contract REJECTED and refunded: ${body?.reason}`);
   process.exit(1);

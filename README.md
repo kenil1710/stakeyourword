@@ -254,6 +254,7 @@ test/pacer.mjs                 the global RPC rate limiter
 test/repro-fee-failure.mjs     the reported production failure, reproduced
 test/proof-commitments.mjs     quote → hash → receipt → id → frontend state
 test/proof-archive.mjs         a commitment settled on a pinned snapshot
+test/probe.mjs                 one round trip, and the optional-argument default
 test/deploy.mjs                deploy + sanity read + env write
 docs/RESUBMISSION.md           the review, point by point, and what to run
 frontend/                      Next.js app
