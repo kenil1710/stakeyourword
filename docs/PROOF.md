@@ -62,6 +62,9 @@ The transaction then parked. `COMMITTING` → appeal round 3 (12 votes committed
 contract had run. The round had not closed, so no state was applied and there
 was no commitment to read yet.
 
+It finalized in the end: `FINALIZED`, 4 rounds, `resultName: AGREE`. The stake
+it recorded, however, is not held by the contract — see the value probe below.
+
 ## `node test/nudge.mjs --tx=0xf504a684… --network=bradbury`
 
 The stuck transaction, driven out by the nudge flow — the command-line form of
@@ -71,13 +74,17 @@ the **Check status** and **Nudge it along** controls in the app.
 network  Genlayer Bradbury Testnet
 tx       0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be
 nudging as empty (0x28Be0f914219422fA0F46F201f47D8356B3eCeC0)
+waiting for a terminal state
 
       1s  COMMITTING  (NOT_VOTED)
     396s  ACCEPTED  (FINISHED_WITH_RETURN)
 
   settled as ACCEPTED after 396s and 14 nudge(s)
   state is applied and the money has moved; it is not irreversible yet.
+  Run again with --until=finalized to wait that out.
 ```
+
+The appeal resolved in agreement — four rounds, `resultName: AGREE`.
 
 And the commitment it created, read back off Bradbury:
 
@@ -96,6 +103,61 @@ COMMITMENT #0
 
 TX status: ACCEPTED | exec: FINISHED_WITH_RETURN
 wallet balance: 2.896934 GEN   (3 GEN − 0.1 stake − 0.003 fees and nudges)
+```
+
+## `node test/bradbury-value-probe.mjs`
+
+Does the stake actually reach the contract? Sampled before, at acceptance, and
+after finalization — because one sample taken in the middle says the opposite of
+the truth.
+
+```
+  before                 contract   0.000000 GEN   wallet   2.990854 GEN   locked 0.100000 GEN
+
+  submitted 0x4444de34f62ef577c1603e70699cab53800c2a5491f147b1652ebd138d294269
+  reached ACCEPTED after 105s, 3 nudge(s), 0 round(s), appeal seen: false
+
+  at acceptance          contract   0.100000 GEN   wallet   2.890417 GEN   locked 0.200000 GEN
+
+  final status FINALIZED
+
+  after finalization     contract   0.000000 GEN   wallet   2.985453 GEN   locked 0.200000 GEN
+
+────────────────────────────────────────────────────────────────────────
+  contract gained   0.000000 GEN
+  wallet lost       0.005401 GEN
+  locked_stakes up  0.100000 GEN
+
+  THE CONTRACT RECORDED A STAKE IT DOES NOT HOLD.
+  locked_stakes went up by 0.100000 GEN and the balance did not move,
+  so gl.message.value reported a transfer the chain did not make.
+  Appeal on this run: false. Rounds: 0.
+```
+
+Settled state on Bradbury, both transactions FINALIZED with `resultName: AGREE`:
+
+```
+0xf504a68421…  FINALIZED | rounds 4 | result AGREE | exec FINISHED_WITH_RETURN
+0x4444de34f6…  FINALIZED | rounds 0 | result AGREE | exec FINISHED_WITH_RETURN
+
+CONTRACT EVM balance : 0 wei
+self.balance         : 0
+locked_stakes        : 200000000000000000 ( 2 commitments )
+unallocated          : -200000000000000000
+WALLET               : 2.985453 GEN  (started at 3)
+```
+
+And the same measurement on Studio Devnet, after a full lifecycle of
+settlements — the control that makes the above a network finding rather than a
+contract one:
+
+```
+  EVM balance : 400000000000000000
+  self.balance: 400000000000000000
+  locked      : 400000000000000000 | unallocated 0
+  commitments : 13 | kept 4 broken 2 lapsed 2
+  SOLVENT: true | exact: true
+  books balance: true
 ```
 
 ## `node test/e2e.mjs --base=https://stakeyourword.vercel.app`

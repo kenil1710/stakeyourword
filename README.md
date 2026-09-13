@@ -19,7 +19,7 @@ says — in the same transaction, with no owner in the loop.
 | Contract source | [`contracts/stake_your_word.py`](contracts/stake_your_word.py) |
 | Design notes | [`contracts/NOTES.md`](contracts/NOTES.md) |
 | Proof runs | [`docs/PROOF.md`](docs/PROOF.md) |
-| Bradbury proof | tx [`0xf504a684…`](https://explorer-bradbury.genlayer.com/tx/0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be), commitment #0 |
+| Bradbury proof | tx [`0xf504a684…`](https://explorer-bradbury.genlayer.com/tx/0xf504a6842144ac2dc0d85b2aec0ecead8db31fa6ba307cf535e22fe0b6ab36be) FINALIZED — and a value bug, see [RESUBMISSION §4](docs/RESUBMISSION.md) |
 
 Studio Devnet is the only one of the three networks running the **v0.3.0**
 executor line this contract targets. Studionet and Bradbury still resolve v0.2
@@ -283,6 +283,7 @@ test/nudge.mjs                 drive a stuck Bradbury transaction to terminal
 test/proof-commitments.mjs     quote → hash → receipt → id → frontend state
 test/proof-archive.mjs         a commitment settled on a pinned snapshot
 test/probe.mjs                 one round trip, and the optional-argument default
+test/bradbury-value-probe.mjs  does the stake actually reach the contract?
 test/deploy.mjs                deploy + sanity read + env write
 docs/RESUBMISSION.md           the review, point by point, and what to run
 docs/PROOF.md                  verbatim output from every run above

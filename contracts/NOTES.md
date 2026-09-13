@@ -121,6 +121,43 @@ before the call. Two details the consensus contract enforces and does not explai
 - `budget` must be **exactly** `gasLimit * maxGasPrice`. Anything else — larger
   included, so "be generous" is not available — is `ExternalAllocationInvalid`.
 
+**On Bradbury, a payable call is credited at acceptance and REFUNDED at
+finalization — and the contract is never told.** Two creates, sampled at every
+stage:
+
+| | at acceptance | after finalization |
+|---|---|---|
+| contract EVM balance | +0.1 GEN | **back to 0** |
+| `locked_stakes` | +0.1 GEN | +0.1 GEN |
+| sender's wallet | −0.1004 | **−0.0054 (fees only)** |
+
+The stake arrives, the contract records it, and then finalization hands it back
+to the sender while `locked_stakes` keeps counting it. Both transactions ended
+FINALIZED with `resultName: AGREE` and `FINISHED_WITH_RETURN`. After two creates
+the contract reports `locked_stakes` of 0.2 GEN against an EVM balance of zero.
+
+**This is not appeal-specific**, which is what it looked like at first: the first
+create went through four rounds including an appeal and the second through zero,
+and both ended the same way. The appeal was a red herring — an intermediate
+sample taken during the second transaction's acceptance window showed 0.1 GEN in
+the contract and read as "the clean path works". It does not. Sampling before,
+at acceptance AND after finalization is what separated the two, and it is why
+`test/bradbury-value-probe.mjs` takes all three.
+
+It is not the contract mis-accounting either. `gl.message.value` must have read
+0.1 inside the VM or `_create_problem` would have rejected the call for sending
+nothing, and the identical source on Studio Devnet is exactly solvent — EVM
+balance, `self.balance` and `locked_stakes` all agreeing at 0.4 GEN after a full
+lifecycle of settlements.
+
+The contract cannot defend against this from inside: `gl.message.value` is the
+only thing it has to go on, and it is what lies. What it CAN do is make the
+divergence visible, which `unallocated` already does — `balance - locked_stakes`
+goes NEGATIVE, and a negative there means exactly one thing: the contract has
+recorded a stake it does not hold. `test/audit.mjs` asserts `balance >=
+locked_stakes` against the live deployment for this reason. That assertion passes
+on Studio Devnet and fails on Bradbury, which is the correct answer on both.
+
 **The SDK major must match the executor line.** genlayer-js 2.x encodes calldata
 for v0.3 and 1.x for v0.2, and they are not interchangeable: a `get_stats` read
 that works under 1.1.8 comes back from 2.0.0-rc.1 against Bradbury as

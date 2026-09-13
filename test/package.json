@@ -12,7 +12,8 @@
     "repro": "node repro-fee-failure.mjs --network=bradbury",
     "proof": "node proof-commitments.mjs",
     "proof:archive": "node proof-archive.mjs",
-    "nudge": "node nudge.mjs"
+    "nudge": "node nudge.mjs",
+    "value-probe": "node bradbury-value-probe.mjs"
   },
   "dependencies": {
     "genlayer-js": "2.0.0-rc.1",

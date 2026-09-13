@@ -9,7 +9,7 @@ Every point in the review, what was actually wrong, and what to run to check it.
 | Runner | `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng` (v0.3.0) |
 | App | https://stakeyourword.vercel.app |
 | Source | https://github.com/kenil1710/stakeyourword |
-| Bradbury proof | tx `0xf504a684…`, commitment #0 on `0xEFC9312D79E5f9e18c2C602Ae6A23E1E0b710cD2` |
+| Bradbury proof | tx `0xf504a684…` FINALIZED, commitment #0 — but see §4: the stake is not held |
 
 ---
 
@@ -55,8 +55,7 @@ signed.
 | Committer | `0x28Be0f914219422fA0F46F201f47D8356B3eCeC0` |
 | Wallet | 3 GEN → 2.896934 GEN (0.1 stake + 0.003 in fees and nudges) |
 
-**3 · And the part I did not stage: it got stuck, and the nudge flow recovered
-it.**
+**3 · The part I did not stage: it got stuck, and the nudge flow recovered it.**
 
 The transaction went `COMMITTING` → appeal round 3 (12 votes committed, 0
 revealed, `resultName: IDLE`) → back to `COMMITTING`, and sat there through 12
@@ -79,9 +78,69 @@ $ node test/nudge.mjs --tx=0xf504a684… --network=bradbury
   settled as ACCEPTED after 396s and 14 nudge(s)
 ```
 
-State applied, commitment #0 on chain.
+State applied, commitment #0 on chain, and it went on to **FINALIZED**
+(`FINISHED_WITH_RETURN`, 4 rounds, `resultName: AGREE`) 84 seconds into the next
+watch.
 
-Two things this cost me, both now fixed and both worth naming:
+**4 · And a finding that stops me calling this a clean success.**
+
+Checking the end state — rather than stopping at a green transcript — turned up
+this:
+
+```
+Bradbury    contract EVM balance  0 wei
+            locked_stakes         200000000000000000   (0.2 GEN, two commitments)
+            unallocated           -200000000000000000
+            sender's wallet       3 GEN → 2.985453 GEN  (0.0145 spent, all fees)
+
+studio-dev  contract EVM balance  400000000000000000
+            self.balance          400000000000000000
+            locked_stakes         400000000000000000
+            unallocated           0
+```
+
+**The commitments record stakes the contract does not hold, and the sender still
+has the money.**
+
+`test/bradbury-value-probe.mjs` submitted a second create and sampled the
+balance at three points, which is what pinned the mechanism down:
+
+| | at acceptance | after finalization |
+|---|---|---|
+| contract EVM balance | +0.1 GEN | **back to 0** |
+| `locked_stakes` | +0.1 GEN | +0.1 GEN |
+| sender's wallet | −0.1004 | **−0.0054 (fees only)** |
+
+**On Bradbury the stake arrives at acceptance and is handed back to the sender at
+finalization, while `locked_stakes` goes on counting it.** Both transactions
+ended FINALIZED, `resultName: AGREE`, `FINISHED_WITH_RETURN`.
+
+I got this wrong once on the way, and the way I got it wrong is the useful part.
+The first create went through four rounds including an appeal and the second
+through zero, so the appeal looked like the cause — and a single sample taken
+during the second transaction's *acceptance window* showed 0.1 GEN sitting in the
+contract and read as "the clean path works". It does not. Only sampling before,
+at acceptance **and** after finalization separated them, which is why the probe
+takes all three.
+
+It is not the contract mis-accounting: `gl.message.value` must have read 0.1
+inside the VM or `_create_problem` would have rejected the call for sending
+nothing, and the identical source on Studio Devnet is exactly solvent after a
+full lifecycle of settlements.
+
+The contract cannot defend against this from inside — `gl.message.value` is the
+only thing it has, and it is what lies. What it can do is make the divergence
+visible, and it already does: `unallocated` is `balance - locked_stakes`, it goes
+**negative**, and a negative there means precisely "a recorded stake that is not
+held". `test/audit.mjs` asserts `balance >= locked_stakes` against the live
+deployment for exactly this reason — passing on Studio Devnet, failing on
+Bradbury, which is the right answer on both.
+
+So: the write path is fixed and proven, the transaction is real and finalized,
+and the commitment on Bradbury is **not backed by its stake**. I would rather
+hand you that than a transcript that reads green.
+
+Three things this cost me, all now fixed and all worth naming:
 
 - The repro script read the commitment straight after submission, found nothing,
   and crashed — then reported three FAILs for a transaction whose execution had
@@ -94,6 +153,10 @@ Two things this cost me, both now fixed and both worth naming:
   like a missing method on a contract that plainly has it and would send anyone
   debugging it at the contract rather than the client. The SDK major must match
   the executor line, so the Bradbury scripts pin 1.1.8 through an npm alias.
+
+- The end state needed checking at all. A transcript full of PASS lines is not
+  the same as a solvent contract, and only reading the balances afterwards found
+  the gap.
 
 The one piece still missing is the **wallet-confirmation screen**: these are
 local signing keys, so nothing prompts. The preflight that gates that screen is
