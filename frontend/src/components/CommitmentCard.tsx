@@ -46,6 +46,19 @@ export function CommitmentCard({
           </span>
         ) : null}
         {mine ? <span className="pill pill-neutral">yours</span> : null}
+        {/*
+          * Whether this promise will be judged on fixed bytes or on a page that
+          * can move under it, said on the card rather than buried on the detail
+          * page — it changes how much a verdict here is worth.
+          */}
+        {commitment.source_kind === "ATTESTED" ? (
+          <span className="pill pill-neutral">pinned snapshot</span>
+        ) : commitment.source_kind === "ARCHIVED" ? (
+          <span className="pill pill-neutral">archived source</span>
+        ) : null}
+        {commitment.verify_in_flight ? (
+          <span className="pill pill-neutral">verifying…</span>
+        ) : null}
 
         <span className="ml-auto">
           {commitment.status === "ACTIVE" && commitment.next_deadline ? (

@@ -57,7 +57,7 @@ export default function Home() {
             n="01"
             icon={<FileSignature size={17} aria-hidden />}
             title="Name the evidence first"
-            body="A URL, chosen before there is anything to hide. It has to be reachable the moment you commit, or your stake is refunded and nothing is created."
+            body="An https URL, chosen before there is anything to hide. It has to be reachable the moment you commit, or your stake is refunded and nothing is created — and what it says right then is hashed on chain, so later drift is measurable rather than arguable."
           />
           <Step
             n="02"
@@ -69,7 +69,7 @@ export default function Home() {
             n="03"
             icon={<Eye size={17} aria-hidden />}
             title="Validators read it separately"
-            body="At each deadline they each fetch the page themselves and judge that period alone. The verdict is what they agree on, not what any one of them says."
+            body="At each deadline they each retrieve the evidence themselves — the archived snapshot from around the deadline where one exists, the live page where it does not — and judge that period alone. They agree on the verdict, on the hash of what they read, and on how far the page has moved since the promise was made. One of them cannot decide it."
           />
           <Step
             n="04"

@@ -105,8 +105,18 @@ check("no v0.2 spellings survive",
     !/^\t\w+: DynArray\[/m.test(src));
 check("no u-type call wrappers (they are not callable in v0.3)",
   !/\bu(8|16|32|64|128|256)\(/.test(src));
-check("gl.contract.get_at is available for cross-contract reads",
-  src.includes("gl.contract") || true);
+/*
+ * `gl.contract.get_at` is the v0.3.0 spelling of `gl.get_contract_at`, and this
+ * contract does not call it — it makes no cross-contract read. The check is
+ * that the OLD spelling is gone, which is the part that would actually break.
+ * Adding a call site to tick a migration checklist would be worse than not
+ * having one: cross-contract reads are a consensus surface, and this contract
+ * has no reason to open one.
+ */
+check("the v0.2 cross-contract spellings are gone",
+  !/\bgl\.get_contract_at\b/.test(src) && !/@gl\.contract_interface\b/.test(src));
+check("the only outbound interface is the EVM payee handle",
+  (src.match(/@gl\.(evm\.contract_interface|contract\.interface)/g) ?? []).length === 1);
 
 /* ══ SOURCE · past rejection patterns ═════════════════════════════════════ */
 

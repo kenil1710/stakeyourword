@@ -198,7 +198,7 @@ export function CommitmentView({ id }: { id: number | null }) {
           <p className="hint mt-2 mb-4 max-w-2xl">
             {data.action === "LAPSED"
               ? "The window for a real judgement has closed. Closing it now returns the stake to the committer and records the period as unverified — the honest outcome, since the page today is not evidence about a window that shut."
-              : "Any address can settle this. Validators will each fetch the page and judge this period on its own."}
+              : "Any address can settle this. Validators each retrieve the evidence for this deadline themselves and judge the period on its own — and a validator that cannot retrieve it will only agree to an inconclusive result, never to one that moves the stake."}
           </p>
           <VerifyButton commitment={data} onSettled={() => mutate()} />
         </section>

@@ -126,7 +126,7 @@ export function VerifyButton({
 
       <p className="hint mt-2">
         {tx.busy && !lapsing
-          ? "Each validator fetches the page independently and judges it on its own. This takes a minute or two."
+          ? "Each validator retrieves the evidence for this deadline independently and judges it on its own. This takes a minute or two."
           : lapsing
             ? "No model runs. The stake goes back to the committer and the period is recorded as unverified — never as kept."
             : isCommitter

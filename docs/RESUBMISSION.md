@@ -52,6 +52,14 @@ resolve v0.2 runners and answer `invalid_contract runner malformed` for this
 source — a runner-version mismatch, not a broken contract. I verified that by
 deploying, not by reading about it.
 
+One item on the format list has no call site: **`gl.contract.get_at`**. It is the
+v0.3.0 spelling of `gl.get_contract_at`, and this contract makes no
+cross-contract read — there is nothing it needs from another contract. A
+cross-contract read is a consensus surface, and opening one to satisfy a
+checklist would be worse than not having it. The audit checks that the *old*
+spelling is gone, which is the part that would actually break, rather than
+asserting a call that should not exist.
+
 Two details worth recording because they cost real time:
 
 - The header is **two** lines. Line 1 is the runner version (`# v0.3.0`), line 2

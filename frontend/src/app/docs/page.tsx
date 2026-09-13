@@ -205,6 +205,16 @@ export default function DocsPage() {
           spent.
         </p>
         <p>
+          One honest caveat about that check: the network estimates a fee by{" "}
+          <em>simulating</em> the call, and this network&apos;s simulator runs on a clock
+          hundreds of days behind the chain&apos;s. So anything the contract decides by time —
+          whether a period is due, whether its grace window has closed — reads wrong in the
+          simulation. When the simulation says the contract would refuse, you are told once and
+          given a &ldquo;send it anyway&rdquo; button rather than being blocked, because the real
+          transaction runs on the real clock. Only the balance check refuses outright; balances
+          are not time-dependent.
+        </p>
+        <p>
           After you sign, the hash appears immediately and the transaction is tracked through{" "}
           <strong>pending → accepted → finalized</strong>. Accepted means the state is applied and
           the money is decided; finalized means it is irreversible. If it parks in between — which

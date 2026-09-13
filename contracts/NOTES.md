@@ -68,6 +68,13 @@ network actually resolves.
   wants. The old safe wrapper is `run_nondet_default`.
 - `gl.evm.contract_interface` survives, and is still how a plain value transfer
   to an EOA is expressed.
+- **`gl.contract.get_at` has no call site here, deliberately.** It is the v0.3.0
+  spelling of `gl.get_contract_at`, and this contract makes no cross-contract
+  read — there is nothing it needs from another contract. A cross-contract read
+  is a consensus surface; opening one to satisfy a migration checklist would be
+  worse than not having it. `test/audit.mjs` checks that the *old* spelling is
+  gone, which is the part that would actually break, rather than asserting a call
+  that should not exist.
 
 ## Deployment hazards
 
