@@ -11,9 +11,11 @@
     "e2e": "node e2e.mjs",
     "repro": "node repro-fee-failure.mjs --network=bradbury",
     "proof": "node proof-commitments.mjs",
-    "proof:archive": "node proof-archive.mjs"
+    "proof:archive": "node proof-archive.mjs",
+    "nudge": "node nudge.mjs"
   },
   "dependencies": {
-    "genlayer-js": "2.0.0-rc.1"
+    "genlayer-js": "2.0.0-rc.1",
+    "genlayer-js-v1": "npm:genlayer-js@^1.1.8"
   }
 }

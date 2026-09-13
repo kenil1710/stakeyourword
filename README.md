@@ -177,10 +177,32 @@ cd test
 node repro-fee-failure.mjs --network=bradbury
 ```
 
-Submits the same write twice against the same network — once the way production
-did, once through the preflight — and prints the RPC errors on the wire in order,
-so the `LackOfFundForMaxFee` → `eth_sendRawTransaction` sequence is visible as
-one failure rather than two. Needs no funded account; that is the point.
+Three things in one run: the failure on an empty wallet with the RPC errors
+printed in the order they hit the wire — so `LackOfFundForMaxFee` →
+`eth_sendRawTransaction` is visible as one failure rather than two — the
+preflight refusing that same call before signing, and then a funded wallet
+carrying it through to a real `create_commitment` with its hash, receipt,
+commitment id and finalization.
+
+It is the one script here that pins **genlayer-js 1.1.8**, through an npm alias.
+Bradbury runs the v0.2 executor line; genlayer-js 2.x encodes calldata for v0.3
+and its method resolution fails there, turning a read that works under 1.1.8 into
+`call to private method __handle_undefined_method__` — which reads like a missing
+method on a contract that has it. The SDK major has to match the executor line.
+
+### Driving a stuck transaction
+
+```bash
+cd test
+node nudge.mjs --tx=0x… --network=bradbury
+```
+
+Bradbury parks a transaction in `COMMITTING` when a validator round does not
+complete, and in `APPEAL_COMMITTING` when it goes to appeal. Neither is a
+failure — `txExecutionResultName` can already read `FINISHED_WITH_RETURN` while
+the transaction is still non-terminal — but the state is not applied and the
+money has not moved until the round closes. This is the command-line form of the
+**Check status** and **Nudge it along** controls the app now exposes.
 
 ### The proof runs
 
@@ -256,6 +278,7 @@ test/e2e.mjs                   lifecycle tests against a live network
 test/fees.mjs                  fee estimation and the preflight balance check
 test/pacer.mjs                 the global RPC rate limiter
 test/repro-fee-failure.mjs     the reported production failure, reproduced
+test/nudge.mjs                 drive a stuck Bradbury transaction to terminal
 test/proof-commitments.mjs     quote → hash → receipt → id → frontend state
 test/proof-archive.mjs         a commitment settled on a pinned snapshot
 test/probe.mjs                 one round trip, and the optional-argument default

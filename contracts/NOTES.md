@@ -121,6 +121,16 @@ before the call. Two details the consensus contract enforces and does not explai
 - `budget` must be **exactly** `gasLimit * maxGasPrice`. Anything else — larger
   included, so "be generous" is not available — is `ExternalAllocationInvalid`.
 
+**The SDK major must match the executor line.** genlayer-js 2.x encodes calldata
+for v0.3 and 1.x for v0.2, and they are not interchangeable: a `get_stats` read
+that works under 1.1.8 comes back from 2.0.0-rc.1 against Bradbury as
+`ValueError: call to private method __handle_undefined_method__`, which reads
+like a missing method on a contract that plainly has it. So the project uses 2.x
+everywhere it talks to Studio Devnet, and `test/repro-fee-failure.mjs` — the one
+script that talks to Bradbury — pins 1.1.8 through an npm alias. That split is
+also why the preflight in that script is the degraded, balance-only form: 1.1.8
+has no fee-estimation API at all.
+
 **Studio Devnet meters at 30 requests per minute, per IP.** That is low enough
 that a single settled write can spend it. `test/pacer.mjs` wraps `fetch` and
 paces every outgoing request under the limit; pacing at the call sites instead
